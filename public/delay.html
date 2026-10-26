@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Delay · Delay Monitor</title>
+    <link rel="stylesheet" href="/assets/common.css" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+    <script src="/format.js"></script>
+    <script src="/assets/common.js"></script>
+  </head>
+  <body
+    data-page="delay"
+    data-title="Delay"
+    data-sub="Selisih waktu perangkat (dtu) dengan waktu diterima server"
+  >
+    <main class="content">
+      <div class="toolbar">
+        <label
+          >Rentang waktu
+          <select id="range">
+            <option value="15m">15 menit</option>
+            <option value="1h" selected>1 jam</option>
+            <option value="24h">24 jam</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="grid kpis" id="kpis"></div>
+
+      <div class="grid two">
+        <div class="card">
+          <h3>Distribusi saat ini</h3>
+          <div class="chart-box"><canvas id="pie"></canvas></div>
+        </div>
+        <div class="card">
+          <h3>Tren delay</h3>
+          <div class="chart-box"><canvas id="trend"></canvas></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>Top 5 delay tertinggi pada rentang terpilih</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Device</th>
+                <th>Device ID</th>
+                <th>Delay maks</th>
+                <th>Kategori</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="offenders"></tbody>
+          </table>
+        </div>
+      </div>
+    </main>
+
+    <script>
+      document.addEventListener("shell-ready", () => {
+        const rangeEl = $("#range");
+        const refresh = poll(async () => {
+          const range = rangeEl.value;
+          const [summary, timeline] = await Promise.all([
+            api(`/api/stats/summary?range=${range}`),
+            api(`/api/stats/timeline?range=${range}`),
+          ]);
+
+          const cw = summary.currentWorst,
+            hw = summary.historicalWorst;
+          const over5s = summary.categories
+            .filter((c) => c.category !== "0-5s")
+            .reduce((s, c) => s + Number(c.count), 0);
+          $("#kpis").innerHTML =
+            kpi("Total device", summary.totalDevices.toLocaleString()) +
+            kpi(
+              "Delay tertinggi saat ini",
+              cw ? formatDelay(cw.delay_ms) : "-",
+              cw ? deviceName(cw) : "",
+            ) +
+            kpi(
+              `Delay tertinggi (${range})`,
+              hw ? formatDelay(hw.delay_ms) : "-",
+              hw ? deviceName(hw) : "",
+            ) +
+            kpi(
+              "Device > 5 detik",
+              over5s.toLocaleString(),
+              `${pct(over5s, summary.totalDevices)}% dari total`,
+            );
+
+          upsertChart(
+            "pie",
+            pieConfig(
+              summary.categories.map((c) => c.category),
+              summary.categories.map((c) => c.count),
+              summary.categories.map(
+                (c) =>
+                  (DELAY_CATEGORIES.find((x) => x.key === c.category) || {})
+                    .color,
+              ),
+            ),
+          );
+
+          upsertChart(
+            "trend",
+            delayLineConfig(
+              timeline.map((t) => new Date(t.bucket).getTime()),
+              [
+                {
+                  label: "Rata-rata",
+                  data: timeline.map((t) => Number(t.avg_delay)),
+                  borderColor: "#2563eb",
+                },
+                {
+                  label: "Maksimum",
+                  data: timeline.map((t) => Number(t.max_delay)),
+                  borderColor: "#dc2626",
+                },
+              ],
+            ),
+          );
+
+          $("#offenders").innerHTML =
+            summary.topOffenders
+              .map(
+                (o, i) => `<tr>
+                <td>${i + 1}</td>
+                <td>${esc(o.device_name || "-")}</td>
+                <td class="mono">${esc(o.device_id)}</td>
+                <td>${formatDelay(o.max_delay)}</td>
+                <td>${badge(getCategory(o.max_delay))}</td>
+                <td><a class="btn-primary" href="${detailHref(o.device_id, o.device_name)}">Detail</a></td>
+              </tr>`,
+              )
+              .join("") ||
+            `<tr><td class="empty" colspan="6">Belum ada data</td></tr>`;
+        }, 5000);
+        rangeEl.addEventListener("change", refresh);
+      });
+    </script>
+  </body>
+</html>

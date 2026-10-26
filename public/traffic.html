@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Traffic · Delay Monitor</title>
+    <link rel="stylesheet" href="/assets/common.css" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+    <script src="/format.js"></script>
+    <script src="/assets/common.js"></script>
+  </head>
+  <body
+    data-page="traffic"
+    data-title="Traffic"
+    data-sub="Volume pesan per action dari WebSocket sumber"
+  >
+    <main class="content">
+      <div class="toolbar">
+        <label
+          >Rentang waktu
+          <select id="range">
+            <option value="15m">15 menit</option>
+            <option value="1h" selected>1 jam</option>
+            <option value="24h">24 jam</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="grid kpis" id="kpis"></div>
+
+      <div class="card" style="margin-bottom: 16px">
+        <h3>Pesan per menit</h3>
+        <div class="chart-box tall"><canvas id="chart"></canvas></div>
+      </div>
+
+      <div class="card">
+        <h3>Total sejak server nyala</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Action</th>
+                <th>Jumlah</th>
+                <th>Porsi</th>
+              </tr>
+            </thead>
+            <tbody id="live"></tbody>
+          </table>
+        </div>
+      </div>
+    </main>
+
+    <script>
+      const PALETTE = [
+        "#2563eb",
+        "#16a34a",
+        "#f59e0b",
+        "#dc2626",
+        "#7c3aed",
+        "#0d9488",
+        "#ea580c",
+      ];
+      const colorOf = {};
+      const actionColor = (a) =>
+        (colorOf[a] ??= PALETTE[Object.keys(colorOf).length % PALETTE.length]);
+
+      document.addEventListener("shell-ready", () => {
+        const rangeEl = $("#range");
+        const refresh = poll(async () => {
+          const [live, history] = await Promise.all([
+            api("/api/traffic/live"),
+            api(`/api/traffic/history?range=${rangeEl.value}`),
+          ]);
+
+          const grand = Object.values(live).reduce((s, v) => s + v, 0);
+          const prevMin = Math.floor(Date.now() / 60000) * 60000 - 60000;
+          const prevRows = history.filter(
+            (h) => new Date(h.bucket).getTime() === prevMin,
+          );
+          const prevTotal = prevRows.reduce((s, r) => s + Number(r.count), 0);
+
+          $("#kpis").innerHTML =
+            kpi(
+              "Total sejak server nyala",
+              grand.toLocaleString(),
+              "reset saat server restart",
+            ) +
+            kpi(
+              "Menit sebelumnya",
+              prevTotal.toLocaleString(),
+              new Date(prevMin).toLocaleTimeString(),
+            ) +
+            kpi("Jumlah action aktif", Object.keys(live).length);
+
+          const buckets = [
+            ...new Set(history.map((h) => new Date(h.bucket).getTime())),
+          ].sort((a, b) => a - b);
+          const actions = [...new Set(history.map((h) => h.action))].sort();
+          const datasets = actions.map((a) => {
+            const m = {};
+            history
+              .filter((h) => h.action === a)
+              .forEach(
+                (h) => (m[new Date(h.bucket).getTime()] = Number(h.count)),
+              );
+            return {
+              label: `Action ${a}`,
+              data: buckets.map((t) => m[t] || 0),
+              borderColor: actionColor(a),
+            };
+          });
+          upsertChart(
+            "chart",
+            lineConfig(
+              buckets,
+              datasets,
+            ),
+          );
+
+          $("#live").innerHTML =
+            Object.entries(live)
+              .sort((a, b) => b[1] - a[1])
+              .map(
+                ([action, count]) => `<tr>
+            <td><span class="badge" style="--c:${actionColor(action)}">${esc(action)}</span></td>
+            <td>${count.toLocaleString()}</td>
+            <td>${pct(count, grand)}%</td>
+          </tr>`,
+              )
+              .join("") ||
+            `<tr><td class="empty" colspan="3">Belum ada traffic</td></tr>`;
+        }, 10000);
+        rangeEl.addEventListener("change", refresh);
+      });
+    </script>
+  </body>
+</html>

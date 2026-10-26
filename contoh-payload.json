@@ -1,0 +1,99 @@
+{
+  "action": "80003",
+  "payload": {
+    "deviceID": "867395074840691",
+    "nodeID": "0",
+    "dtu": "2026-10-08 14:23:07",
+    "isLater": "0",
+    "location": {
+      "mode": "1",
+      "dtu": "2026-10-08 14:23:07",
+      "direct": "168",
+      "satellites": "22",
+      "speed": "15.78",
+      "altitude": "26",
+      "precision": "0",
+      "longitude": "106.842628",
+      "latitude": "-6.180433",
+      "speedSource": "0"
+    },
+    "gsensor": {
+      "x": "-0.07",
+      "y": "-0.10",
+      "z": "1.04",
+      "tilt": "7.10",
+      "hit": "0.13"
+    },
+    "basic": {
+      "key": "1"
+    },
+    "mobile": {
+      "link": "1",
+      "type": "5",
+      "strength": "10"
+    },
+    "module": {
+      "mobile": "1",
+      "location": "1",
+      "wifi": "3",
+      "gsensor": "1",
+      "record": "0x3"
+    },
+    "fuel": {
+      "cost": "0.00"
+    },
+    "wifi": {
+      "strength": "0",
+      "ssid": ""
+    },
+    "storage": [
+      {
+        "name": "sd1",
+        "index": "0",
+        "status": "1",
+        "total": "472507",
+        "free": "0"
+      }
+    ],
+    "alarm": {
+      "videoLost": "0x0",
+      "motionDection": "0x0",
+      "videoMask": "0x0",
+      "input": "0x0",
+      "overSpeed": "0x0",
+      "lowSpeed": "0x0",
+      "urgency": "0x0"
+    },
+    "mileage": {
+      "todayDay": "102310",
+      "total": "50185480"
+    },
+    "voltage": {
+      "vcc": "13.60",
+      "bat": "4.94"
+    },
+    "bluetooh": {
+      "connect": "0"
+    },
+    "load": {
+      "status": "0"
+    },
+    "devtemp": {
+      "cpu": "74.00",
+      "disk": "-0.01"
+    },
+    "tanker": {
+      "status": "0",
+      "rpm": "0",
+      "forward": "0",
+      "reverse": "0",
+      "duration": "0"
+    },
+    "ext": {
+      "isLater": false,
+      "accessMode": 5,
+      "deviceName": "BDL-1734",
+      "reportTime": 1791444188521
+    }
+  }
+}

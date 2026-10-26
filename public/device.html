@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Detail Device · Delay Monitor</title>
+    <link rel="stylesheet" href="/assets/common.css" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+    <script src="/format.js"></script>
+    <script src="/assets/common.js"></script>
+  </head>
+  <body data-page="devices" data-title="Detail Device" data-sub="Memuat…">
+    <main class="content">
+      <div class="toolbar">
+        <a href="/devices.html" class="btn-primary"
+          >&larr; Kembali ke daftar device</a
+        >
+        <span class="spacer"></span>
+        <label
+          >Rentang waktu
+          <select id="range">
+            <option value="15m">15 menit</option>
+            <option value="1h" selected>1 jam</option>
+            <option value="24h">24 jam</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="grid kpis" id="kpis"></div>
+
+      <div class="grid two">
+        <div class="card">
+          <h3>Distribusi kategori delay</h3>
+          <div class="chart-box"><canvas id="pie"></canvas></div>
+        </div>
+        <div class="card">
+          <h3>Riwayat delay</h3>
+          <div class="chart-box"><canvas id="history"></canvas></div>
+          <div id="sampleNote" class="kpi"><div class="hint"></div></div>
+          <div class="kpi"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>50 event terakhir</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Diterima</th>
+                <th>DTU</th>
+                <th>Delay</th>
+                <th>Kategori</th>
+              </tr>
+            </thead>
+            <tbody id="events"></tbody>
+          </table>
+        </div>
+      </div>
+    </main>
+
+    <script>
+      const params = new URLSearchParams(location.search);
+      const deviceId = params.get("id");
+      const deviceNameParam = params.get("name") || deviceId;
+      const MAX_POINTS = 1000;
+
+      // Kurangi jumlah titik agar grafik 24 jam tidak berat; ambil delay maksimum per kelompok
+      // supaya lonjakan tidak hilang saat diringkas.
+      function downsample(rows) {
+        if (rows.length <= MAX_POINTS) return { rows, sampled: false };
+        const step = Math.ceil(rows.length / MAX_POINTS);
+        const out = [];
+        for (let i = 0; i < rows.length; i += step) {
+          const chunk = rows.slice(i, i + step);
+          out.push(
+            chunk.reduce((m, r) =>
+              Number(r.delay_ms) > Number(m.delay_ms) ? r : m,
+            ),
+          );
+        }
+        return { rows: out, sampled: true, step };
+      }
+
+      document.addEventListener("shell-ready", () => {
+        if (!deviceId) {
+          $(".content").innerHTML =
+            `<div class="card">Parameter <code>id</code> tidak ditemukan di URL.</div>`;
+          setStatus(false);
+          return;
+        }
+
+        $(".topbar h1").textContent = deviceNameParam;
+        $(".topbar .sub").textContent = `ID: ${deviceId}`;
+        document.title = `${deviceNameParam} · Delay Monitor`;
+
+        const rangeEl = $("#range");
+        const idPath = encodeURIComponent(deviceId);
+
+        const refresh = poll(async () => {
+          const range = rangeEl.value;
+          const [stats, history] = await Promise.all([
+            api(`/api/devices/${idPath}/stats?range=${range}`),
+            api(`/api/devices/${idPath}/history?range=${range}`),
+          ]);
+
+          const last = history[history.length - 1];
+          const total = Number(stats.total_count);
+          const over5m =
+            (stats.categories.find((c) => c.category === ">5m") || {}).count ||
+            0;
+
+          $("#kpis").innerHTML =
+            kpi(
+              "Delay terakhir",
+              last ? formatDelay(last.delay_ms) : "-",
+              last
+                ? new Date(last.received_at).toLocaleString()
+                : "belum ada data",
+            ) +
+            kpi(`Delay maks (${range})`, formatDelay(stats.max_delay)) +
+            kpi("Delay rata-rata", formatDelay(Math.round(stats.avg_delay))) +
+            kpi(
+              "Total event",
+              total.toLocaleString(),
+              `${pct(over5m, total)}% di atas 5 menit`,
+            );
+
+          upsertChart(
+            "pie",
+            pieConfig(
+              stats.categories.map((c) => c.category),
+              stats.categories.map((c) => c.count),
+              stats.categories.map(
+                (c) =>
+                  (DELAY_CATEGORIES.find((x) => x.key === c.category) || {})
+                    .color,
+              ),
+            ),
+          );
+
+          const { rows, sampled, step } = downsample(history);
+          const cfg = delayLineConfig(
+            rows.map((h) => new Date(h.received_at).getTime()),
+            [
+              {
+                label: "Delay",
+                data: rows.map((h) => Number(h.delay_ms)), // milidetik mentah, jangan dibagi 1000
+                borderColor: "#94a3b8",
+                pointBackgroundColor: rows.map(
+                  (h) => getCategory(h.delay_ms).color,
+                ),
+                pointRadius: rows.length > 300 ? 0 : 3,
+              },
+            ],
+          );
+          cfg.options.plugins.legend.display = false; // hanya satu seri
+          upsertChart("history", cfg);
+          $("#sampleNote .hint").textContent = sampled
+            ? `Grafik diringkas: ${history.length.toLocaleString()} event menjadi ${rows.length.toLocaleString()} titik (delay maks tiap ${step} event).`
+            : "";
+
+          $("#events").innerHTML =
+            history
+              .slice(-50)
+              .reverse()
+              .map(
+                (h) => `<tr>
+            <td>${new Date(h.received_at).toLocaleString()}</td>
+            <td>${new Date(h.dtu).toLocaleString()}</td>
+            <td>${formatDelay(h.delay_ms)}</td>
+            <td>${badge(getCategory(h.delay_ms))}</td>
+          </tr>`,
+              )
+              .join("") ||
+            `<tr><td class="empty" colspan="4">Belum ada event pada rentang ini</td></tr>`;
+        }, 5000);
+
+        rangeEl.addEventListener("change", refresh);
+      });
+    </script>
+  </body>
+</html>

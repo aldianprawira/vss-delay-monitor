@@ -1,0 +1,313 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Summary · Delay Monitor</title>
+    <link rel="stylesheet" href="/assets/common.css" />
+    <script src="/format.js"></script>
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+    <script src="/assets/common.js"></script>
+  </head>
+  <body
+    data-page="summary"
+    data-title="Summary"
+    data-sub="Ringkasan delay per device pada tanggal tertentu"
+  >
+    <main class="content">
+      <div class="toolbar">
+        <input id="date" type="date" />
+        <button id="load" class="btn-primary">Tampilkan</button>
+        <input
+          id="q"
+          type="search"
+          placeholder="Cari nama atau ID…"
+          style="min-width: 240px"
+        />
+        <button id="export" class="btn-primary" disabled>Download Excel</button>
+        <span class="spacer"></span>
+        <span id="range" class="pill"></span>
+        <span id="count" class="pill"></span>
+      </div>
+
+      <div id="err" class="card" style="display: none; color: #dc2626"></div>
+
+      <div class="grid kpis" id="kpis"></div>
+
+      <div class="card">
+        <h3>Distribusi device per kategori delay (berdasarkan rata-rata)</h3>
+        <div class="chart-box"><canvas id="delayPie"></canvas></div>
+      </div>
+
+      <div class="card">
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th class="sortable" data-sort="deviceName">
+                  Device <span class="si"></span>
+                </th>
+                <th class="sortable" data-sort="deviceId">
+                  Device ID <span class="si"></span>
+                </th>
+                <th class="sortable" data-sort="count">
+                  Record <span class="si"></span>
+                </th>
+                <th class="sortable" data-sort="minDelay">
+                  Min <span class="si"></span>
+                </th>
+                <th class="sortable" data-sort="avgDelay">
+                  Avg <span class="si"></span>
+                </th>
+                <th class="sortable" data-sort="maxDelay">
+                  Max <span class="si"></span>
+                </th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="rows"></tbody>
+          </table>
+        </div>
+        <div class="pager">
+          <button id="prev">‹ Sebelumnya</button>
+          <span id="pageInfo"></span>
+          <button id="next">Berikutnya ›</button>
+        </div>
+      </div>
+    </main>
+
+    <script>
+      const PAGE_SIZE = 50;
+      const state = {
+        all: [],
+        totals: null,
+        date: "",
+        q: "",
+        sort: "avgDelay",
+        dir: "desc",
+        page: 0,
+      };
+
+      // Tanggal hari ini menurut WIB (zona waktu device)
+      const todayWIB = () =>
+        new Date(Date.now() + 7 * 3600 * 1000).toISOString().slice(0, 10);
+
+      function view() {
+        const q = state.q.trim().toLowerCase();
+        const list = state.all.filter(
+          (d) =>
+            !q ||
+            (d.deviceName || "").toLowerCase().includes(q) ||
+            String(d.deviceId).toLowerCase().includes(q),
+        );
+
+        const { sort, dir } = state;
+        const num = ["count", "minDelay", "avgDelay", "maxDelay"].includes(
+          sort,
+        );
+        const val = (d) =>
+          num ? Number(d[sort]) : String(d[sort] ?? "").toLowerCase();
+        list.sort(
+          (a, b) =>
+            (val(a) < val(b) ? -1 : val(a) > val(b) ? 1 : 0) *
+            (dir === "asc" ? 1 : -1),
+        );
+        return list;
+      }
+
+      function renderKpis() {
+        const t = state.totals;
+        if (!t) {
+          $("#kpis").innerHTML = "";
+          return;
+        }
+        $("#kpis").innerHTML =
+          kpi(
+            "Device ditampilkan",
+            t.shown.toLocaleString(),
+            `${pct(t.shown, t.sentData)}% dari yang kirim data`,
+          ) +
+          kpi(
+            "Kirim data ≥ 1x",
+            t.sentData.toLocaleString(),
+            `dari ${t.registeredDevices.toLocaleString()} device terdaftar`,
+          ) +
+          kpi(
+            "Exclude: tidak kirim data",
+            t.noData.toLocaleString(),
+            "tanpa satu record pun",
+          ) +
+          kpi(
+            "Exclude: min = max = avg = 0",
+            t.excludedZero.toLocaleString(),
+            "delay selalu 0",
+          ) +
+          kpi("Total record", t.records.toLocaleString(), "pada tanggal ini");
+      }
+
+      function render() {
+        const list = view();
+        const pages = Math.max(1, Math.ceil(list.length / PAGE_SIZE));
+        state.page = Math.min(state.page, pages - 1);
+        const slice = list.slice(
+          state.page * PAGE_SIZE,
+          (state.page + 1) * PAGE_SIZE,
+        );
+
+        $("#rows").innerHTML =
+          slice
+            .map(
+              (d) => `<tr>
+          <td>${esc(d.deviceName || "-")}</td>
+          <td class="mono">${esc(d.deviceId)}</td>
+          <td>${d.count.toLocaleString()}</td>
+          <td>${formatDelay(d.minDelay)}</td>
+          <td>${formatDelay(d.avgDelay)} ${badge(getCategory(d.avgDelay))}</td>
+          <td>${formatDelay(d.maxDelay)} ${badge(getCategory(d.maxDelay))}</td>
+          <td><a class="btn-primary" href="${detailHref(d.deviceId, d.deviceName)}">Detail</a></td>
+        </tr>`,
+            )
+            .join("") ||
+          `<tr><td class="empty" colspan="7">Tidak ada device yang cocok</td></tr>`;
+
+        $("#count").textContent =
+          `${list.length.toLocaleString()} dari ${state.all.length.toLocaleString()} device`;
+        $("#pageInfo").textContent = `Halaman ${state.page + 1} / ${pages}`;
+        $("#prev").disabled = state.page === 0;
+        $("#next").disabled = state.page >= pages - 1;
+        $("#export").disabled = state.all.length === 0;
+        document.querySelectorAll("th.sortable").forEach((th) => {
+          th.querySelector(".si").textContent =
+            th.dataset.sort === state.sort
+              ? state.dir === "asc"
+                ? "▲"
+                : "▼"
+              : "";
+        });
+      }
+
+      function renderPie() {
+        // Kategori ditentukan dari AVG delay tiap device, bukan max
+        const counts = Object.fromEntries(
+          DELAY_CATEGORIES.map((c) => [c.key, 0]),
+        );
+        state.all.forEach((d) => {
+          const key = getCategory(d.avgDelay).key;
+          counts[key] = (counts[key] || 0) + 1;
+        });
+        upsertChart(
+          "delayPie",
+          pieConfig(
+            DELAY_CATEGORIES.map((c) => c.key),
+            DELAY_CATEGORIES.map((c) => counts[c.key]),
+            DELAY_CATEGORIES.map((c) => c.color),
+          ),
+        );
+      }
+
+      function exportXlsx() {
+        if (!window.XLSX) {
+          alert(
+            "Library Excel gagal dimuat. Periksa koneksi internet lalu muat ulang halaman.",
+          );
+          return;
+        }
+        const rows = view().map((d) => ({
+          Device: d.deviceName || "",
+          "Device ID": String(d.deviceId),
+          Min: formatDelay(d.minDelay),
+          Avg: formatDelay(d.avgDelay),
+          Max: formatDelay(d.maxDelay),
+        }));
+
+        const ws = XLSX.utils.json_to_sheet(rows, {
+          header: ["Device", "Device ID", "Min", "Avg", "Max"],
+        });
+        ws["!cols"] = [
+          { wch: 28 },
+          { wch: 24 },
+          { wch: 14 },
+          { wch: 14 },
+          { wch: 14 },
+        ];
+
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "Summary");
+        XLSX.writeFile(wb, `summary-delay-${state.date || "data"}.xlsx`);
+      }
+
+      document.addEventListener("shell-ready", () => {
+        $("#date").value = todayWIB();
+        $("#date").max = todayWIB();
+
+        const on = (sel, ev, fn) => $(sel).addEventListener(ev, fn);
+        on("#load", "click", load);
+        on("#export", "click", exportXlsx);
+        on("#date", "change", load);
+        on("#q", "input", (e) => {
+          state.q = e.target.value;
+          state.page = 0;
+          render();
+        });
+        on("#prev", "click", () => {
+          state.page--;
+          render();
+        });
+        on("#next", "click", () => {
+          state.page++;
+          render();
+        });
+        document.querySelectorAll("th.sortable").forEach((th) =>
+          th.addEventListener("click", () => {
+            const col = th.dataset.sort;
+            state.dir =
+              state.sort === col && state.dir === "asc" ? "desc" : "asc";
+            state.sort = col;
+            render();
+          }),
+        );
+
+        load(); // tanpa poll(): query harian berat dan hari lampau tidak berubah
+
+        async function load() {
+          const btn = $("#load");
+          const err = $("#err");
+          btn.disabled = true;
+          err.style.display = "none";
+          $("#rows").innerHTML =
+            `<tr><td class="empty" colspan="7">Memuat… (satu hari penuh bisa butuh beberapa detik)</td></tr>`;
+          try {
+            // fetch langsung agar pesan error dari server (mis. di luar retensi) bisa ditampilkan
+            const res = await fetch(
+              `/api/summary?date=${encodeURIComponent($("#date").value)}`,
+            );
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+
+            state.all = data.devices;
+            state.totals = data.totals;
+            state.date = data.date;
+            state.page = 0;
+            $("#range").textContent = `${data.date} · 00:00–24:00 WIB`;
+            renderKpis();
+            render();
+            renderPie();
+            setStatus(true);
+          } catch (e) {
+            state.all = [];
+            state.totals = null;
+            err.textContent = `Gagal memuat: ${e.message}`;
+            err.style.display = "block";
+            renderKpis();
+            render();
+            renderPie();
+            setStatus(false);
+          } finally {
+            btn.disabled = false;
+          }
+        }
+      });
+    </script>
+  </body>
+</html>

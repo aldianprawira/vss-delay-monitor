@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Overview · Delay Monitor</title>
+    <link rel="stylesheet" href="/assets/common.css" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+    <script src="/format.js"></script>
+    <script src="/assets/common.js"></script>
+  </head>
+  <body
+    data-page="index"
+    data-title="Overview"
+    data-sub="Ringkasan kondisi seluruh device"
+  >
+    <main class="content">
+      <div class="grid kpis" id="kpis"></div>
+
+      <div class="grid two">
+        <div class="card">
+          <h3>Distribusi delay saat ini</h3>
+          <div class="chart-box"><canvas id="delayPie"></canvas></div>
+        </div>
+        <div class="card">
+          <h3>Tren delay (1 jam)</h3>
+          <div class="chart-box"><canvas id="trend"></canvas></div>
+        </div>
+      </div>
+
+      <div class="grid even">
+        <a class="card link-card" href="/delay.html"
+          ><h3>Delay</h3>
+          <p>
+            Distribusi kategori, tren, dan device dengan delay tertinggi.
+          </p></a
+        >
+        <a class="card link-card" href="/staleness.html"
+          ><h3>Staleness</h3>
+          <p>Device yang sudah lama tidak melapor.</p></a
+        >
+        <a class="card link-card" href="/traffic.html"
+          ><h3>Traffic</h3>
+          <p>Volume pesan per action dari WebSocket sumber.</p></a
+        >
+        <a class="card link-card" href="/devices.html"
+          ><h3>Devices</h3>
+          <p>Daftar lengkap device dengan filter dan pengurutan.</p></a
+        >
+        <a class="card link-card" href="/summary.html"
+          ><h3>Summary</h3>
+          <p>
+            Min, rata-rata, dan maksimum delay per device pada tanggal tertentu.
+          </p></a
+        >
+      </div>
+    </main>
+
+    <script>
+      document.addEventListener("shell-ready", () => {
+        poll(async () => {
+          const [devices, summary, timeline, traffic] = await Promise.all([
+            api("/api/devices"),
+            api("/api/stats/summary?range=1h"),
+            api("/api/stats/timeline?range=1h"),
+            api("/api/traffic/history?range=15m"),
+          ]);
+
+          const now = Date.now();
+          const online = devices.filter(
+            (d) =>
+              getStalenessCategory(now - new Date(d.last_received).getTime())
+                .key === "ONLINE",
+          ).length;
+          const over5s = summary.categories
+            .filter((c) => c.category !== "0-5s")
+            .reduce((s, c) => s + Number(c.count), 0);
+
+          const prevMin = Math.floor(now / 60000) * 60000 - 60000;
+          const prevTotal = traffic
+            .filter((r) => new Date(r.bucket).getTime() === prevMin)
+            .reduce((s, r) => s + Number(r.count), 0);
+
+          const worst = summary.currentWorst;
+          $("#kpis").innerHTML =
+            kpi("Total device", summary.totalDevices.toLocaleString()) +
+            kpi(
+              "Device online",
+              `${online.toLocaleString()}`,
+              `${pct(online, summary.totalDevices)}% dari total`,
+            ) +
+            kpi(
+              "Delay > 5 detik",
+              over5s.toLocaleString(),
+              `${pct(over5s, summary.totalDevices)}% dari total`,
+            ) +
+            kpi(
+              "Delay tertinggi",
+              worst ? formatDelay(worst.delay_ms) : "-",
+              worst ? deviceName(worst) : "",
+            ) +
+            kpi(
+              "Traffic menit lalu",
+              prevTotal.toLocaleString(),
+              "pesan, semua action",
+            );
+
+          upsertChart(
+            "delayPie",
+            pieConfig(
+              summary.categories.map((c) => c.category),
+              summary.categories.map((c) => c.count),
+              summary.categories.map(
+                (c) =>
+                  (DELAY_CATEGORIES.find((x) => x.key === c.category) || {})
+                    .color,
+              ),
+            ),
+          );
+
+          upsertChart(
+            "trend",
+            delayLineConfig(
+              timeline.map((t) => new Date(t.bucket).getTime()),
+              [
+                {
+                  label: "Rata-rata",
+                  data: timeline.map((t) => Number(t.avg_delay)),
+                  borderColor: "#2563eb",
+                },
+                {
+                  label: "Maksimum",
+                  data: timeline.map((t) => Number(t.max_delay)),
+                  borderColor: "#dc2626",
+                },
+              ],
+            ),
+          );
+        }, 5000);
+      });
+    </script>
+  </body>
+</html>

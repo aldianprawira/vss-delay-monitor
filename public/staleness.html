@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Staleness · Delay Monitor</title>
+    <link rel="stylesheet" href="/assets/common.css" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+    <script src="/format.js"></script>
+    <script src="/assets/common.js"></script>
+  </head>
+  <body
+    data-page="staleness"
+    data-title="Staleness"
+    data-sub="Sudah berapa lama sejak device terakhir melapor"
+  >
+    <main class="content">
+      <div class="grid kpis" id="kpis"></div>
+      <div class="card" style="margin-bottom: 16px">
+        <h3>Keterangan status</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Status</th>
+                <th>Belum melapor selama</th>
+                <th>Artinya</th>
+              </tr>
+            </thead>
+            <tbody id="legend"></tbody>
+          </table>
+        </div>
+        <div class="kpi">
+          <div class="hint" style="white-space: normal; margin-top: 10px">
+            Dihitung dari waktu server terakhir menerima pesan dari device
+            (bukan dari <code>dtu</code>). Jika banyak device berpindah ke
+            OFFLINE bersamaan, periksa koneksi ingestor lebih dulu sebelum
+            menyimpulkan semua device bermasalah.
+          </div>
+        </div>
+      </div>
+
+      <div class="grid two">
+        <div class="card">
+          <h3>Distribusi status</h3>
+          <div class="chart-box"><canvas id="pie"></canvas></div>
+        </div>
+        <div class="card">
+          <h3>20 device paling lama tidak melapor</h3>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Device</th>
+                  <th>Device ID</th>
+                  <th>Terakhir lapor</th>
+                  <th>Status</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="stale"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <script>
+      document.addEventListener("shell-ready", () => {
+        const rangeLabel = (c) =>
+          !Number.isFinite(c.max)
+            ? `lebih dari ${formatAxisDelay(c.min)}`
+            : c.min === 0
+              ? `kurang dari ${formatAxisDelay(c.max)}`
+              : `${formatAxisDelay(c.min)} sampai ${formatAxisDelay(c.max)}`;
+
+        $("#legend").innerHTML = STALENESS_CATEGORIES.map(
+          (c) => `<tr>
+          <td>${badge(c)}</td>
+          <td>${esc(rangeLabel(c))}</td>
+          <td style="white-space:normal">${esc(c.desc || "")}</td>
+        </tr>`,
+        ).join("");
+        poll(async () => {
+          const devices = await api("/api/devices");
+          const now = Date.now();
+
+          const counts = Object.fromEntries(
+            STALENESS_CATEGORIES.map((c) => [c.key, 0]),
+          );
+          const enriched = devices.map((d) => {
+            const age = now - new Date(d.last_received).getTime();
+            const cat = getStalenessCategory(age);
+            counts[cat.key]++;
+            return { ...d, age, cat };
+          });
+
+          $("#kpis").innerHTML = STALENESS_CATEGORIES.map((c) =>
+            kpi(
+              c.key,
+              counts[c.key].toLocaleString(),
+              `${pct(counts[c.key], devices.length)}% dari ${devices.length.toLocaleString()} device`,
+            ),
+          ).join("");
+
+          upsertChart(
+            "pie",
+            pieConfig(
+              STALENESS_CATEGORIES.map((c) => c.key),
+              STALENESS_CATEGORIES.map((c) => counts[c.key]),
+              STALENESS_CATEGORIES.map((c) => c.color),
+            ),
+          );
+
+          $("#stale").innerHTML =
+            enriched
+              .sort((a, b) => b.age - a.age)
+              .slice(0, 20)
+              .map(
+                (d, i) => `<tr>
+            <td>${i + 1}</td>
+            <td>${esc(d.device_name || "-")}</td>
+            <td class="mono">${esc(d.device_id)}</td>
+            <td>${formatStaleness(d.age)}</td>
+            <td>${badge(d.cat)}</td>
+            <td><a class="btn-primary" href="${detailHref(d.device_id, d.device_name)}">Detail</a></td>
+          </tr>`,
+              )
+              .join("") ||
+            `<tr><td class="empty" colspan="6">Belum ada device</td></tr>`;
+        }, 5000);
+      });
+    </script>
+  </body>
+</html>
