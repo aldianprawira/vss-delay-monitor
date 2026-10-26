@@ -9,6 +9,13 @@ dayjs.extend(timezone);
 const express = require("express");
 const { Pool } = require("pg");
 
+const { ProxyAgent, fetch: proxyFetch } = require("undici");
+const { HttpsProxyAgent } = require("https-proxy-agent");
+
+const PROXY_URL = process.env.HTTPS_PROXY || process.env.https_proxy || "";
+const proxyDispatcher = PROXY_URL ? new ProxyAgent(PROXY_URL) : undefined;
+const proxyWsAgent = PROXY_URL ? new HttpsProxyAgent(PROXY_URL) : undefined;
+
 // ============ KONFIGURASI ============
 const DEVICE_TZ = "Asia/Jakarta";
 const ACTION_AUTH = "80000";
@@ -128,10 +135,11 @@ function requeue(records) {
 let cachedAuth = null;
 
 async function login() {
-  const res = await fetch(process.env.LOGIN_URL, {
+  const res = await (PROXY_URL ? proxyFetch : fetch)(process.env.LOGIN_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    signal: AbortSignal.timeout(LOGIN_TIMEOUT_MS), // tidak menggantung selamanya
+    signal: AbortSignal.timeout(LOGIN_TIMEOUT_MS),
+    dispatcher: proxyDispatcher,
     body: JSON.stringify({
       username: process.env.LOGIN_USERNAME,
       password: process.env.LOGIN_PASSWORD,
@@ -267,6 +275,7 @@ async function connectWebSocket() {
 
   const ws = new WebSocket(process.env.WS_SOURCE_URL, {
     handshakeTimeout: WS_HANDSHAKE_TIMEOUT_MS,
+    agent: proxyWsAgent,
   });
   const conn = { gotData: false, authOk: false };
   let lastActivity = Date.now(); // pesan apa pun ATAU pong
