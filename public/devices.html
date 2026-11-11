@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="id">
+<html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -11,21 +11,21 @@
   <body
     data-page="devices"
     data-title="Devices"
-    data-sub="Status terakhir setiap device"
+    data-sub="Latest telemetry status for each device"
   >
     <main class="content">
       <div class="toolbar">
         <input
           id="q"
           type="search"
-          placeholder="Cari nama atau ID…"
+          placeholder="Search by name or ID…"
           style="min-width: 240px"
         />
         <select id="fDelay">
-          <option value="">Semua kategori delay</option>
+          <option value="">All delay categories</option>
         </select>
         <select id="fStale">
-          <option value="">Semua status</option>
+          <option value="">All statuses</option>
         </select>
         <span class="spacer"></span>
         <span id="count" class="pill"></span>
@@ -46,7 +46,7 @@
                   Delay <span class="si"></span>
                 </th>
                 <th class="sortable" data-sort="last_received">
-                  Terakhir lapor <span class="si"></span>
+                  Last Seen <span class="si"></span>
                 </th>
                 <th class="sortable" data-sort="last_dtu">
                   Last DTU <span class="si"></span>
@@ -58,15 +58,14 @@
           </table>
         </div>
         <div class="pager">
-          <button id="prev">‹ Sebelumnya</button>
+          <button id="prev">‹ Previous</button>
           <span id="pageInfo"></span>
-          <button id="next">Berikutnya ›</button>
+          <button id="next">Next ›</button>
         </div>
       </div>
     </main>
 
     <script>
-      const PAGE_SIZE = 50;
       const state = {
         all: [],
         q: "",
@@ -77,80 +76,50 @@
         page: 0,
       };
 
-      function view() {
-        const now = Date.now();
-        const q = state.q.trim().toLowerCase();
-        let list = state.all
-          .map((d) => ({
-            ...d,
-            age: now - new Date(d.last_received).getTime(),
-            delayCat: getCategory(d.delay_ms),
-          }))
-          .map((d) => ({ ...d, staleCat: getStalenessCategory(d.age) }))
-          .filter(
-            (d) =>
-              (!q ||
-                (d.device_name || "").toLowerCase().includes(q) ||
-                String(d.device_id).toLowerCase().includes(q)) &&
-              (!state.delay || d.delayCat.key === state.delay) &&
-              (!state.stale || d.staleCat.key === state.stale),
-          );
-
-        const { sort, dir } = state;
-        const num = ["delay_ms"].includes(sort),
-          date = ["last_received", "last_dtu"].includes(sort);
-        const val = (d) =>
-          num
-            ? Number(d[sort])
-            : date
-              ? new Date(d[sort]).getTime()
-              : String(d[sort] ?? "").toLowerCase();
-        list.sort(
-          (a, b) =>
-            (val(a) < val(b) ? -1 : val(a) > val(b) ? 1 : 0) *
-            (dir === "asc" ? 1 : -1),
-        );
-        return list;
-      }
-
-      function render() {
-        const list = view();
-        const pages = Math.max(1, Math.ceil(list.length / PAGE_SIZE));
-        state.page = Math.min(state.page, pages - 1);
-        const slice = list.slice(
-          state.page * PAGE_SIZE,
-          (state.page + 1) * PAGE_SIZE,
-        );
-
-        $("#rows").innerHTML =
-          slice
-            .map(
-              (d) => `<tr>
-          <td>${esc(d.device_name || "-")}</td>
-          <td class="mono">${esc(d.device_id)}</td>
-          <td>${formatDelay(d.delay_ms)} ${badge(d.delayCat)}</td>
-          <td>${formatStaleness(d.age)} ${badge(d.staleCat)}</td>
-          <td>${new Date(d.last_dtu).toLocaleString()}</td>
-          <td><a class="btn-primary" href="${detailHref(d.device_id, d.device_name)}">Detail</a></td>
-        </tr>`,
-            )
-            .join("") ||
-          `<tr><td class="empty" colspan="6">Tidak ada device yang cocok</td></tr>`;
-
-        $("#count").textContent =
-          `${list.length.toLocaleString()} dari ${state.all.length.toLocaleString()} device`;
-        $("#pageInfo").textContent = `Halaman ${state.page + 1} / ${pages}`;
-        $("#prev").disabled = state.page === 0;
-        $("#next").disabled = state.page >= pages - 1;
-        document.querySelectorAll("th.sortable").forEach((th) => {
-          th.querySelector(".si").textContent =
-            th.dataset.sort === state.sort
-              ? state.dir === "asc"
-                ? "▲"
-                : "▼"
-              : "";
-        });
-      }
+      const table = createTableController({
+        state,
+        colSpan: 6,
+        emptyMessage: "No matching devices found",
+        prepareItems(s) {
+          const now = Date.now();
+          const q = s.q.trim().toLowerCase();
+          return s.all
+            .map((d) => {
+              const age = now - new Date(d.last_received).getTime();
+              return {
+                ...d,
+                age,
+                delayCat: getCategory(d.delay_ms),
+                staleCat: getStalenessCategory(age),
+              };
+            })
+            .filter(
+              (d) =>
+                (!q ||
+                  (d.device_name || "").toLowerCase().includes(q) ||
+                  String(d.device_id).toLowerCase().includes(q)) &&
+                (!s.delay || d.delayCat.key === s.delay) &&
+                (!s.stale || d.staleCat.key === s.stale),
+            );
+        },
+        getSortValue(d, col) {
+          if (col === "delay_ms") return Number(d[col]);
+          if (col === "last_received" || col === "last_dtu") {
+            return new Date(d[col]).getTime();
+          }
+          return String(d[col] ?? "").toLowerCase();
+        },
+        renderRow(d) {
+          return `<tr>
+            <td>${esc(d.device_name || "-")}</td>
+            <td class="mono">${esc(d.device_id)}</td>
+            <td>${formatDelay(d.delay_ms)} ${badge(d.delayCat)}</td>
+            <td>${formatStaleness(d.age)} ${badge(d.staleCat)}</td>
+            <td>${new Date(d.last_dtu).toLocaleString()}</td>
+            <td><a class="btn-primary" href="${detailHref(d.device_id, d.device_name)}">Details</a></td>
+          </tr>`;
+        },
+      });
 
       document.addEventListener("shell-ready", () => {
         DELAY_CATEGORIES.forEach((c) =>
@@ -166,43 +135,22 @@
           ),
         );
 
-        const on = (sel, ev, fn) => $(sel).addEventListener(ev, fn);
-        on("#q", "input", (e) => {
-          state.q = e.target.value;
-          state.page = 0;
-          render();
-        });
-        on("#fDelay", "change", (e) => {
+        table.bindControls();
+
+        $("#fDelay").addEventListener("change", (e) => {
           state.delay = e.target.value;
           state.page = 0;
-          render();
+          table.render();
         });
-        on("#fStale", "change", (e) => {
+        $("#fStale").addEventListener("change", (e) => {
           state.stale = e.target.value;
           state.page = 0;
-          render();
+          table.render();
         });
-        on("#prev", "click", () => {
-          state.page--;
-          render();
-        });
-        on("#next", "click", () => {
-          state.page++;
-          render();
-        });
-        document.querySelectorAll("th.sortable").forEach((th) =>
-          th.addEventListener("click", () => {
-            const col = th.dataset.sort;
-            state.dir =
-              state.sort === col && state.dir === "asc" ? "desc" : "asc";
-            state.sort = col;
-            render();
-          }),
-        );
 
         poll(async () => {
           state.all = await api("/api/devices");
-          render();
+          table.render();
         }, 5000);
       });
     </script>

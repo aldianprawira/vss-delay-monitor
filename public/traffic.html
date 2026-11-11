@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="id">
+<html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -12,36 +12,25 @@
   <body
     data-page="traffic"
     data-title="Traffic"
-    data-sub="Volume pesan per action dari WebSocket sumber"
+    data-sub="Message volume per action from upstream WebSocket"
   >
     <main class="content">
-      <div class="toolbar">
-        <label
-          >Rentang waktu
-          <select id="range">
-            <option value="15m">15 menit</option>
-            <option value="1h" selected>1 jam</option>
-            <option value="24h">24 jam</option>
-          </select>
-        </label>
-      </div>
-
       <div class="grid kpis" id="kpis"></div>
 
       <div class="card" style="margin-bottom: 16px">
-        <h3>Pesan per menit</h3>
+        <h3>Messages per minute</h3>
         <div class="chart-box tall"><canvas id="chart"></canvas></div>
       </div>
 
       <div class="card">
-        <h3>Total sejak server nyala</h3>
+        <h3>Cumulative total since server start</h3>
         <div class="table-wrap">
           <table>
             <thead>
               <tr>
                 <th>Action</th>
-                <th>Jumlah</th>
-                <th>Porsi</th>
+                <th>Count</th>
+                <th>Share</th>
               </tr>
             </thead>
             <tbody id="live"></tbody>
@@ -65,11 +54,17 @@
         (colorOf[a] ??= PALETTE[Object.keys(colorOf).length % PALETTE.length]);
 
       document.addEventListener("shell-ready", () => {
-        const rangeEl = $("#range");
-        const refresh = poll(async () => {
+        let refresh;
+        const picker = createTimeRangePicker("#timePicker", {
+          defaultKey: "1h",
+          onChange: () => refresh && refresh(),
+        });
+
+        refresh = poll(async () => {
+          const qs = picker.toQueryString();
           const [live, history] = await Promise.all([
             api("/api/traffic/live"),
-            api(`/api/traffic/history?range=${rangeEl.value}`),
+            api(`/api/traffic/history?${qs}`),
           ]);
 
           const grand = Object.values(live).reduce((s, v) => s + v, 0);
@@ -81,16 +76,16 @@
 
           $("#kpis").innerHTML =
             kpi(
-              "Total sejak server nyala",
+              "Total since server start",
               grand.toLocaleString(),
-              "reset saat server restart",
+              "resets on server restart",
             ) +
             kpi(
-              "Menit sebelumnya",
+              "Previous minute",
               prevTotal.toLocaleString(),
               new Date(prevMin).toLocaleTimeString(),
             ) +
-            kpi("Jumlah action aktif", Object.keys(live).length);
+            kpi("Active actions", Object.keys(live).length);
 
           const buckets = [
             ...new Set(history.map((h) => new Date(h.bucket).getTime())),
@@ -109,13 +104,7 @@
               borderColor: actionColor(a),
             };
           });
-          upsertChart(
-            "chart",
-            lineConfig(
-              buckets,
-              datasets,
-            ),
-          );
+          upsertChart("chart", lineConfig(buckets, datasets));
 
           $("#live").innerHTML =
             Object.entries(live)
@@ -128,9 +117,8 @@
           </tr>`,
               )
               .join("") ||
-            `<tr><td class="empty" colspan="3">Belum ada traffic</td></tr>`;
+            `<tr><td class="empty" colspan="3">No traffic recorded yet</td></tr>`;
         }, 10000);
-        rangeEl.addEventListener("change", refresh);
       });
     </script>
   </body>

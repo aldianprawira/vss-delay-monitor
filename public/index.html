@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="id">
+<html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -12,18 +12,18 @@
   <body
     data-page="index"
     data-title="Overview"
-    data-sub="Ringkasan kondisi seluruh device"
+    data-sub="Fleet-wide device telemetry overview"
   >
     <main class="content">
       <div class="grid kpis" id="kpis"></div>
 
       <div class="grid two">
         <div class="card">
-          <h3>Distribusi delay saat ini</h3>
+          <h3>Current delay distribution</h3>
           <div class="chart-box"><canvas id="delayPie"></canvas></div>
         </div>
         <div class="card">
-          <h3>Tren delay (1 jam)</h3>
+          <h3 id="trendTitle">Delay trend</h3>
           <div class="chart-box"><canvas id="trend"></canvas></div>
         </div>
       </div>
@@ -32,25 +32,26 @@
         <a class="card link-card" href="/delay.html"
           ><h3>Delay</h3>
           <p>
-            Distribusi kategori, tren, dan device dengan delay tertinggi.
+            Category distribution, trends, and devices with the highest delay.
           </p></a
         >
         <a class="card link-card" href="/staleness.html"
           ><h3>Staleness</h3>
-          <p>Device yang sudah lama tidak melapor.</p></a
+          <p>Devices that have not reported recently.</p></a
         >
         <a class="card link-card" href="/traffic.html"
           ><h3>Traffic</h3>
-          <p>Volume pesan per action dari WebSocket sumber.</p></a
+          <p>Message volume per action from the upstream WebSocket.</p></a
         >
         <a class="card link-card" href="/devices.html"
           ><h3>Devices</h3>
-          <p>Daftar lengkap device dengan filter dan pengurutan.</p></a
+          <p>Complete device directory with filtering and sorting.</p></a
         >
         <a class="card link-card" href="/summary.html"
           ><h3>Summary</h3>
           <p>
-            Min, rata-rata, dan maksimum delay per device pada tanggal tertentu.
+            Minimum, average, and maximum delay per device for a specific time
+            range.
           </p></a
         >
       </div>
@@ -58,11 +59,21 @@
 
     <script>
       document.addEventListener("shell-ready", () => {
-        poll(async () => {
+        let refresh;
+        const picker = createTimeRangePicker("#timePicker", {
+          defaultKey: "1h",
+          onChange: () => refresh && refresh(),
+        });
+
+        refresh = poll(async () => {
+          const qs = picker.toQueryString();
+          const win = picker.getWindow();
+          $("#trendTitle").textContent = `Delay trend (${win.label})`;
+
           const [devices, summary, timeline, traffic] = await Promise.all([
             api("/api/devices"),
-            api("/api/stats/summary?range=1h"),
-            api("/api/stats/timeline?range=1h"),
+            api(`/api/stats/summary?${qs}`),
+            api(`/api/stats/timeline?${qs}`),
             api("/api/traffic/history?range=15m"),
           ]);
 
@@ -72,9 +83,7 @@
               getStalenessCategory(now - new Date(d.last_received).getTime())
                 .key === "ONLINE",
           ).length;
-          const over5s = summary.categories
-            .filter((c) => c.category !== "0-5s")
-            .reduce((s, c) => s + Number(c.count), 0);
+          const over5s = countDelayedDevices(summary.categories);
 
           const prevMin = Math.floor(now / 60000) * 60000 - 60000;
           const prevTotal = traffic
@@ -83,59 +92,30 @@
 
           const worst = summary.currentWorst;
           $("#kpis").innerHTML =
-            kpi("Total device", summary.totalDevices.toLocaleString()) +
+            kpi("Total devices", summary.totalDevices.toLocaleString()) +
             kpi(
-              "Device online",
+              "Online devices",
               `${online.toLocaleString()}`,
-              `${pct(online, summary.totalDevices)}% dari total`,
+              `${pct(online, summary.totalDevices)}% of total`,
             ) +
             kpi(
-              "Delay > 5 detik",
+              "Delay > 5s",
               over5s.toLocaleString(),
-              `${pct(over5s, summary.totalDevices)}% dari total`,
+              `${pct(over5s, summary.totalDevices)}% of total`,
             ) +
             kpi(
-              "Delay tertinggi",
+              "Highest delay",
               worst ? formatDelay(worst.delay_ms) : "-",
               worst ? deviceName(worst) : "",
             ) +
             kpi(
-              "Traffic menit lalu",
+              "Last minute traffic",
               prevTotal.toLocaleString(),
-              "pesan, semua action",
+              "messages across all actions",
             );
 
-          upsertChart(
-            "delayPie",
-            pieConfig(
-              summary.categories.map((c) => c.category),
-              summary.categories.map((c) => c.count),
-              summary.categories.map(
-                (c) =>
-                  (DELAY_CATEGORIES.find((x) => x.key === c.category) || {})
-                    .color,
-              ),
-            ),
-          );
-
-          upsertChart(
-            "trend",
-            delayLineConfig(
-              timeline.map((t) => new Date(t.bucket).getTime()),
-              [
-                {
-                  label: "Rata-rata",
-                  data: timeline.map((t) => Number(t.avg_delay)),
-                  borderColor: "#2563eb",
-                },
-                {
-                  label: "Maksimum",
-                  data: timeline.map((t) => Number(t.max_delay)),
-                  borderColor: "#dc2626",
-                },
-              ],
-            ),
-          );
+          upsertChart("delayPie", categoryPieConfig(summary.categories));
+          upsertChart("trend", delayTrendConfig(timeline));
         }, 5000);
       });
     </script>

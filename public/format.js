@@ -1,73 +1,76 @@
 const DELAY_CATEGORIES = [
-  { key: "0-5s", min: 0, max: 5000, color: "#28a745" }, // Hijau
-  { key: "5s-1m", min: 5000, max: 60000, color: "#ffc107" }, // Kuning
-  { key: ">1m", min: 60000, max: Infinity, color: "#dc3545" }, // Merah
+  { key: "0-5s", min: 0, max: 5000, color: "#28a745" },
+  { key: "5s-1m", min: 5000, max: 60000, color: "#ffc107" },
+  { key: ">1m", min: 60000, max: Infinity, color: "#dc3545" },
 ];
 
 const STALENESS_CATEGORIES = [
   {
     key: "ONLINE",
     min: 0,
-    max: 600000, // 10 menit
+    max: 600000,
     color: "#28a745",
-    desc: "Device melapor baru-baru ini. Kondisi normal, tidak perlu tindakan.",
+    desc: "Device reported recently. Operating normally; no action required.",
   },
   {
     key: "WARNING",
     min: 600000,
-    max: 3600000, // 1 jam
+    max: 3600000,
     color: "#ffc107",
-    desc: "Device sudah cukup lama diam. Kemungkinan ada gangguan jaringan, daya, atau perangkat, sehingga perlu dicek.",
+    desc: "Device has been silent for a while. Potential network, power, or hardware issue; check recommended.",
   },
   {
     key: "OFFLINE",
     min: 3600000,
     max: Infinity,
     color: "#dc3545",
-    desc: "Device tidak melapor dalam waktu lama. Anggap terputus sampai ada laporan baru.",
+    desc: "Device has not reported for an extended period. Consider disconnected until a new report arrives.",
   },
 ];
 
-// Pecah nilai ms menjadi bagian tanda dan detik absolut.
-// Nilai di bawah 1 detik tidak diberi tanda minus (hindari "-0s").
-function splitSigned(ms) {
-  const n = Number(ms);
-  if (!Number.isFinite(n)) return null;
-  const totalSeconds = Math.floor(Math.abs(n) / 1000);
-  return { sign: n < 0 && totalSeconds > 0 ? "-" : "", totalSeconds };
+// Suppress negative signs when sub-second values round down to 0 to prevent rendering "-0s".
+function splitSignedSeconds(ms) {
+  const numericMs = Number(ms);
+  if (!Number.isFinite(numericMs)) return null;
+  const totalSeconds = Math.floor(Math.abs(numericMs) / 1000);
+  return {
+    sign: numericMs < 0 && totalSeconds > 0 ? "-" : "",
+    totalSeconds,
+  };
 }
 
 function formatDelay(ms) {
-  const p = splitSigned(ms);
-  if (!p) return "-";
-  const { sign, totalSeconds } = p;
+  const parsed = splitSignedSeconds(ms);
+  if (!parsed) return "-";
+  const { sign, totalSeconds } = parsed;
 
   if (totalSeconds < 60) return `${sign}${totalSeconds}s`;
   if (totalSeconds < 3600) {
-    const m = Math.floor(totalSeconds / 60);
-    const s = totalSeconds % 60;
-    return `${sign}${m}m ${s}s`;
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${sign}${minutes}m ${seconds}s`;
   }
-  const h = Math.floor(totalSeconds / 3600);
-  const m = Math.floor((totalSeconds % 3600) / 60);
-  const s = totalSeconds % 60;
-  return `${sign}${h}h ${m}m ${s}s`;
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  return `${sign}${hours}h ${minutes}m ${seconds}s`;
 }
 
-// Sama seperti formatDelay tapi dengan satuan hari untuk staleness besar
 function formatStaleness(ms) {
-  const p = splitSigned(ms);
-  if (!p) return "-";
-  const { sign, totalSeconds } = p;
+  const parsed = splitSignedSeconds(ms);
+  if (!parsed) return "-";
+  const { sign, totalSeconds } = parsed;
 
-  if (totalSeconds < 60) return `${sign}${totalSeconds}s lalu`;
-  if (totalSeconds < 3600)
-    return `${sign}${Math.floor(totalSeconds / 60)}m lalu`;
-  if (totalSeconds < 86400)
-    return `${sign}${Math.floor(totalSeconds / 3600)}h lalu`;
+  if (totalSeconds < 60) return `${sign}${totalSeconds}s ago`;
+  if (totalSeconds < 3600) {
+    return `${sign}${Math.floor(totalSeconds / 60)}m ago`;
+  }
+  if (totalSeconds < 86400) {
+    return `${sign}${Math.floor(totalSeconds / 3600)}h ago`;
+  }
   const days = Math.floor(totalSeconds / 86400);
   const hours = Math.floor((totalSeconds % 86400) / 3600);
-  return `${sign}${days}d ${hours}h lalu`;
+  return `${sign}${days}d ${hours}h ago`;
 }
 
 function getCategory(ms) {

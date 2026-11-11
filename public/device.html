@@ -1,56 +1,59 @@
 <!doctype html>
-<html lang="id">
+<html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Detail Device · Delay Monitor</title>
+    <title>Device Details · Delay Monitor</title>
     <link rel="stylesheet" href="/assets/common.css" />
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
     <script src="/format.js"></script>
     <script src="/assets/common.js"></script>
   </head>
-  <body data-page="devices" data-title="Detail Device" data-sub="Memuat…">
+  <body data-page="devices" data-title="Device Details" data-sub="Loading…">
     <main class="content">
       <div class="toolbar">
-        <a href="/devices.html" class="btn-primary"
-          >&larr; Kembali ke daftar device</a
-        >
-        <span class="spacer"></span>
-        <label
-          >Rentang waktu
-          <select id="range">
-            <option value="15m">15 menit</option>
-            <option value="1h" selected>1 jam</option>
-            <option value="24h">24 jam</option>
-          </select>
-        </label>
+        <a href="/devices.html" class="btn-primary">&larr; Back to devices</a>
       </div>
 
       <div class="grid kpis" id="kpis"></div>
 
       <div class="grid two">
         <div class="card">
-          <h3>Distribusi kategori delay</h3>
+          <h3>Delay category distribution</h3>
           <div class="chart-box"><canvas id="pie"></canvas></div>
         </div>
         <div class="card">
-          <h3>Riwayat delay</h3>
+          <h3>Delay history</h3>
           <div class="chart-box"><canvas id="history"></canvas></div>
           <div id="sampleNote" class="kpi"><div class="hint"></div></div>
-          <div class="kpi"></div>
         </div>
       </div>
 
       <div class="card">
-        <h3>50 event terakhir</h3>
+        <div class="toolbar" style="margin-bottom: 12px">
+          <h3 id="eventsTitle" style="margin: 0">Events in selected range</h3>
+          <span class="spacer"></span>
+          <span id="eventsCount" class="pill"></span>
+          <label style="font-size: 12px; color: var(--muted)">
+            Show
+            <select id="eventLimit">
+              <option value="25">25 rows</option>
+              <option value="50" selected>50 rows</option>
+              <option value="100">100 rows</option>
+              <option value="250">250 rows</option>
+              <option value="500">500 rows</option>
+              <option value="0">All rows</option>
+            </select>
+          </label>
+        </div>
         <div class="table-wrap">
           <table>
             <thead>
               <tr>
-                <th>Diterima</th>
+                <th>Received At</th>
                 <th>DTU</th>
                 <th>Delay</th>
-                <th>Kategori</th>
+                <th>Category</th>
               </tr>
             </thead>
             <tbody id="events"></tbody>
@@ -64,9 +67,9 @@
       const deviceId = params.get("id");
       const deviceNameParam = params.get("name") || deviceId;
       const MAX_POINTS = 1000;
+      let currentHistory = [];
 
-      // Kurangi jumlah titik agar grafik 24 jam tidak berat; ambil delay maksimum per kelompok
-      // supaya lonjakan tidak hilang saat diringkas.
+      // Retain the maximum delay per bucket when downsampling so transient spikes remain visible in 24h views.
       function downsample(rows) {
         if (rows.length <= MAX_POINTS) return { rows, sampled: false };
         const step = Math.ceil(rows.length / MAX_POINTS);
@@ -85,7 +88,7 @@
       document.addEventListener("shell-ready", () => {
         if (!deviceId) {
           $(".content").innerHTML =
-            `<div class="card">Parameter <code>id</code> tidak ditemukan di URL.</div>`;
+            `<div class="card">URL parameter <code>id</code> is required.</div>`;
           setStatus(false);
           return;
         }
@@ -94,76 +97,32 @@
         $(".topbar .sub").textContent = `ID: ${deviceId}`;
         document.title = `${deviceNameParam} · Delay Monitor`;
 
-        const rangeEl = $("#range");
         const idPath = encodeURIComponent(deviceId);
+        const limitEl = $("#eventLimit");
+        let refresh;
+        const picker = createTimeRangePicker("#timePicker", {
+          defaultKey: "1h",
+          align: "right",
+          onChange: () => refresh && refresh(),
+        });
 
-        const refresh = poll(async () => {
-          const range = rangeEl.value;
-          const [stats, history] = await Promise.all([
-            api(`/api/devices/${idPath}/stats?range=${range}`),
-            api(`/api/devices/${idPath}/history?range=${range}`),
-          ]);
+        function renderEvents() {
+          const limit = Number(limitEl.value);
+          const win = picker.getWindow();
+          const displayed =
+            limit > 0
+              ? currentHistory.slice(-limit).reverse()
+              : [...currentHistory].reverse();
 
-          const last = history[history.length - 1];
-          const total = Number(stats.total_count);
-          const over5m =
-            (stats.categories.find((c) => c.category === ">5m") || {}).count ||
-            0;
-
-          $("#kpis").innerHTML =
-            kpi(
-              "Delay terakhir",
-              last ? formatDelay(last.delay_ms) : "-",
-              last
-                ? new Date(last.received_at).toLocaleString()
-                : "belum ada data",
-            ) +
-            kpi(`Delay maks (${range})`, formatDelay(stats.max_delay)) +
-            kpi("Delay rata-rata", formatDelay(Math.round(stats.avg_delay))) +
-            kpi(
-              "Total event",
-              total.toLocaleString(),
-              `${pct(over5m, total)}% di atas 5 menit`,
-            );
-
-          upsertChart(
-            "pie",
-            pieConfig(
-              stats.categories.map((c) => c.category),
-              stats.categories.map((c) => c.count),
-              stats.categories.map(
-                (c) =>
-                  (DELAY_CATEGORIES.find((x) => x.key === c.category) || {})
-                    .color,
-              ),
-            ),
-          );
-
-          const { rows, sampled, step } = downsample(history);
-          const cfg = delayLineConfig(
-            rows.map((h) => new Date(h.received_at).getTime()),
-            [
-              {
-                label: "Delay",
-                data: rows.map((h) => Number(h.delay_ms)), // milidetik mentah, jangan dibagi 1000
-                borderColor: "#94a3b8",
-                pointBackgroundColor: rows.map(
-                  (h) => getCategory(h.delay_ms).color,
-                ),
-                pointRadius: rows.length > 300 ? 0 : 3,
-              },
-            ],
-          );
-          cfg.options.plugins.legend.display = false; // hanya satu seri
-          upsertChart("history", cfg);
-          $("#sampleNote .hint").textContent = sampled
-            ? `Grafik diringkas: ${history.length.toLocaleString()} event menjadi ${rows.length.toLocaleString()} titik (delay maks tiap ${step} event).`
-            : "";
+          $("#eventsTitle").textContent =
+            limit > 0
+              ? `Latest ${limit} events (${win.shortLabel})`
+              : `All events (${win.shortLabel})`;
+          $("#eventsCount").textContent =
+            `Showing ${displayed.length.toLocaleString()} of ${currentHistory.length.toLocaleString()} events`;
 
           $("#events").innerHTML =
-            history
-              .slice(-50)
-              .reverse()
+            displayed
               .map(
                 (h) => `<tr>
             <td>${new Date(h.received_at).toLocaleString()}</td>
@@ -173,10 +132,70 @@
           </tr>`,
               )
               .join("") ||
-            `<tr><td class="empty" colspan="4">Belum ada event pada rentang ini</td></tr>`;
-        }, 5000);
+            `<tr><td class="empty" colspan="4">No events in this time range</td></tr>`;
+        }
 
-        rangeEl.addEventListener("change", refresh);
+        limitEl.addEventListener("change", renderEvents);
+
+        refresh = poll(async () => {
+          const qs = picker.toQueryString();
+          const win = picker.getWindow();
+          const [stats, history] = await Promise.all([
+            api(`/api/devices/${idPath}/stats?${qs}`),
+            api(`/api/devices/${idPath}/history?${qs}`),
+          ]);
+          currentHistory = history;
+
+          const last = history[history.length - 1];
+          const total = Number(stats.total_count);
+          const over1m =
+            (stats.categories.find((c) => c.category === ">1m") || {}).count ||
+            0;
+
+          $("#kpis").innerHTML =
+            kpi(
+              "Latest delay",
+              last ? formatDelay(last.delay_ms) : "-",
+              last
+                ? new Date(last.received_at).toLocaleString()
+                : "no data yet",
+            ) +
+            kpi(
+              `Max delay (${win.shortLabel})`,
+              formatDelay(stats.max_delay),
+            ) +
+            kpi("Average delay", formatDelay(Math.round(stats.avg_delay))) +
+            kpi(
+              "Total events",
+              total.toLocaleString(),
+              `${pct(over1m, total)}% over 1 minute`,
+            );
+
+          upsertChart("pie", categoryPieConfig(stats.categories));
+
+          const { rows, sampled, step } = downsample(history);
+          const cfg = delayLineConfig(
+            rows.map((h) => new Date(h.received_at).getTime()),
+            [
+              {
+                label: "Delay",
+                data: rows.map((h) => Number(h.delay_ms)),
+                borderColor: "#94a3b8",
+                pointBackgroundColor: rows.map(
+                  (h) => getCategory(h.delay_ms).color,
+                ),
+                pointRadius: rows.length > 300 ? 0 : 3,
+              },
+            ],
+          );
+          cfg.options.plugins.legend.display = false;
+          upsertChart("history", cfg);
+          $("#sampleNote .hint").textContent = sampled
+            ? `Chart downsampled: ${history.length.toLocaleString()} events into ${rows.length.toLocaleString()} points (max delay per ${step} events).`
+            : "";
+
+          renderEvents();
+        }, 5000);
       });
     </script>
   </body>

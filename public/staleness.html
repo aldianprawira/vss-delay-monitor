@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="id">
+<html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -12,19 +12,19 @@
   <body
     data-page="staleness"
     data-title="Staleness"
-    data-sub="Sudah berapa lama sejak device terakhir melapor"
+    data-sub="Time elapsed since each device last reported"
   >
     <main class="content">
       <div class="grid kpis" id="kpis"></div>
       <div class="card" style="margin-bottom: 16px">
-        <h3>Keterangan status</h3>
+        <h3>Status legend</h3>
         <div class="table-wrap">
           <table>
             <thead>
               <tr>
                 <th>Status</th>
-                <th>Belum melapor selama</th>
-                <th>Artinya</th>
+                <th>Silent duration</th>
+                <th>Meaning</th>
               </tr>
             </thead>
             <tbody id="legend"></tbody>
@@ -32,21 +32,21 @@
         </div>
         <div class="kpi">
           <div class="hint" style="white-space: normal; margin-top: 10px">
-            Dihitung dari waktu server terakhir menerima pesan dari device
-            (bukan dari <code>dtu</code>). Jika banyak device berpindah ke
-            OFFLINE bersamaan, periksa koneksi ingestor lebih dulu sebelum
-            menyimpulkan semua device bermasalah.
+            Calculated from the time the server last received a message from the
+            device (rather than <code>dtu</code>). If many devices transition to
+            OFFLINE simultaneously, check the ingestor connection before
+            assuming a fleet-wide device outage.
           </div>
         </div>
       </div>
 
       <div class="grid two">
         <div class="card">
-          <h3>Distribusi status</h3>
+          <h3>Status distribution</h3>
           <div class="chart-box"><canvas id="pie"></canvas></div>
         </div>
         <div class="card">
-          <h3>20 device paling lama tidak melapor</h3>
+          <h3>Top 20 longest-silent devices</h3>
           <div class="table-wrap">
             <table>
               <thead>
@@ -54,7 +54,7 @@
                   <th>#</th>
                   <th>Device</th>
                   <th>Device ID</th>
-                  <th>Terakhir lapor</th>
+                  <th>Last Seen</th>
                   <th>Status</th>
                   <th></th>
                 </tr>
@@ -70,10 +70,10 @@
       document.addEventListener("shell-ready", () => {
         const rangeLabel = (c) =>
           !Number.isFinite(c.max)
-            ? `lebih dari ${formatAxisDelay(c.min)}`
+            ? `more than ${formatAxisDelay(c.min)}`
             : c.min === 0
-              ? `kurang dari ${formatAxisDelay(c.max)}`
-              : `${formatAxisDelay(c.min)} sampai ${formatAxisDelay(c.max)}`;
+              ? `less than ${formatAxisDelay(c.max)}`
+              : `${formatAxisDelay(c.min)} to ${formatAxisDelay(c.max)}`;
 
         $("#legend").innerHTML = STALENESS_CATEGORIES.map(
           (c) => `<tr>
@@ -100,7 +100,7 @@
             kpi(
               c.key,
               counts[c.key].toLocaleString(),
-              `${pct(counts[c.key], devices.length)}% dari ${devices.length.toLocaleString()} device`,
+              `${pct(counts[c.key], devices.length)}% of ${devices.length.toLocaleString()} devices`,
             ),
           ).join("");
 
@@ -124,11 +124,11 @@
             <td class="mono">${esc(d.device_id)}</td>
             <td>${formatStaleness(d.age)}</td>
             <td>${badge(d.cat)}</td>
-            <td><a class="btn-primary" href="${detailHref(d.device_id, d.device_name)}">Detail</a></td>
+            <td><a class="btn-primary" href="${detailHref(d.device_id, d.device_name)}">Details</a></td>
           </tr>`,
               )
               .join("") ||
-            `<tr><td class="empty" colspan="6">Belum ada device</td></tr>`;
+            `<tr><td class="empty" colspan="6">No devices found</td></tr>`;
         }, 5000);
       });
     </script>
