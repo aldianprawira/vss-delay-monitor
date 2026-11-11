@@ -401,7 +401,7 @@ router.get(
           registeredCount: Number(regResult.rows[0].n),
         };
       },
-      { statementTimeoutMs: SUMMARY_TIMEOUT_MS },
+      { statementTimeoutMs: SUMMARY_TIMEOUT_MS, cancelOnCloseRes: res },
     );
 
     // Devices reporting exclusively 0ms delays are inactive or uncalibrated and excluded from the report.

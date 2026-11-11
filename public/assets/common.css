@@ -393,6 +393,45 @@ td.empty {
   color: var(--muted);
   margin-left: 2px;
 }
+.trp-spinner {
+  width: 13px;
+  height: 13px;
+  border: 2px solid #cbd5e1;
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  display: none;
+  animation: trp-spin 0.65s linear infinite;
+}
+.trp.loading .trp-spinner {
+  display: inline-block;
+}
+.trp.loading .trp-clock {
+  display: none;
+}
+.trp-cancel {
+  display: none;
+  align-items: center;
+  gap: 4px;
+  margin-left: 6px;
+  padding: 5px 10px;
+  border-radius: 8px;
+  border: 1px solid #fecaca;
+  background: #fef2f2;
+  color: var(--danger);
+  font-size: 12px;
+  font-weight: 600;
+}
+.trp-cancel:hover {
+  background: #fee2e2;
+}
+.trp.loading .trp-cancel {
+  display: inline-flex;
+}
+@keyframes trp-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
 .trp-popover {
   position: absolute;
   top: calc(100% + 6px);

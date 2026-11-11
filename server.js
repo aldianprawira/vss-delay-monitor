@@ -24,6 +24,7 @@ app.use(express.static("public"));
 app.use(routes);
 
 app.use((err, req, res, next) => {
+  if (err.code === "57014" && (req.destroyed || res.writableEnded)) return;
   console.error(`❌ ${req.method} ${req.originalUrl}:`, err.message);
   if (res.headersSent) return next(err);
   res.status(500).json({ error: "internal_error" });

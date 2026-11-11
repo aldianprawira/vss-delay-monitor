@@ -21,9 +21,24 @@ const esc = (v) =>
 
 const pct = (n, total) => (total > 0 ? ((n / total) * 100).toFixed(1) : "0.0");
 
-async function api(url) {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
+let activeQueryController = null;
+let activeTimePicker = null;
+
+async function api(url, options = {}) {
+  const signal =
+    options.signal ||
+    (url !== "/api/health" && activeQueryController
+      ? activeQueryController.signal
+      : undefined);
+  const res = await fetch(url, { ...options, signal });
+  if (!res.ok) {
+    let errMsg = `HTTP ${res.status} for ${url}`;
+    try {
+      const body = await res.json();
+      if (body && body.error) errMsg = body.error;
+    } catch (_) {}
+    throw new Error(errMsg);
+  }
   return res.json();
 }
 
@@ -64,9 +79,14 @@ function buildShell() {
   content.insertAdjacentHTML("afterbegin", '<div id="ingestBanner"></div>');
 }
 
-function setStatus(ok) {
+function setStatus(ok, customText) {
   const el = $("#conn");
   if (!el) return;
+  if (customText) {
+    el.className = "pill warn";
+    el.textContent = customText;
+    return;
+  }
   el.className = "pill " + (ok ? "ok" : "err");
   el.textContent = ok
     ? `Live · ${new Date().toLocaleTimeString()}`
@@ -147,15 +167,55 @@ function startHealthLoop() {
 }
 
 function poll(fn, intervalMs) {
-  return createVisibilityLoop(async () => {
+  let running = false;
+  let currentRunId = 0;
+
+  async function execute({ manual = false } = {}) {
+    if (!manual && (running || document.hidden)) return;
+    if (manual && activeQueryController) {
+      activeQueryController.abort();
+    }
+
+    const runId = ++currentRunId;
+    const controller = new AbortController();
+    activeQueryController = controller;
+    running = true;
+
+    if (manual && activeTimePicker) {
+      activeTimePicker.setLoading(true, () => controller.abort());
+    }
+
     try {
       await fn();
-      setStatus(true);
+      if (runId === currentRunId) {
+        if (manual && activeTimePicker) activeTimePicker.commitPendingRange();
+        setStatus(true);
+      }
     } catch (err) {
+      if (controller.signal.aborted || err?.name === "AbortError") {
+        if (runId === currentRunId) {
+          setStatus(true, "Query cancelled");
+        }
+        return;
+      }
       console.error(err);
-      setStatus(false);
+      if (runId === currentRunId) setStatus(false);
+    } finally {
+      if (runId === currentRunId) {
+        running = false;
+        activeQueryController = null;
+        if (activeTimePicker) activeTimePicker.setLoading(false);
+      }
     }
-  }, intervalMs);
+  }
+
+  execute({ manual: false });
+  setInterval(() => execute({ manual: false }), intervalMs);
+  document.addEventListener(
+    "visibilitychange",
+    () => !document.hidden && execute({ manual: false }),
+  );
+  return () => execute({ manual: true });
 }
 
 const charts = {};
@@ -620,6 +680,8 @@ function createTimeRangePicker(
 
   let fromRaw = fallbackPreset.from;
   let toRaw = fallbackPreset.to;
+  let previousRange = null;
+  let onCancelCallback = null;
 
   try {
     const saved = JSON.parse(sessionStorage.getItem(ACTIVE_RANGE_KEY) || "null");
@@ -639,12 +701,14 @@ function createTimeRangePicker(
     <div class="trp-bar">
       <button type="button" class="trp-prev" title="Shift time range backward">«</button>
       <button type="button" class="trp-toggle" title="Select time range">
-        <span>🕒</span>
+        <span class="trp-clock">🕒</span>
+        <span class="trp-spinner" aria-hidden="true"></span>
         <span class="trp-label"></span>
         <span class="trp-caret">▾</span>
       </button>
       <button type="button" class="trp-next" title="Shift time range forward">»</button>
     </div>
+    <button type="button" class="trp-cancel" title="Cancel active query">✕ Cancel</button>
     <div class="trp-popover ${align === "right" ? "right-align" : ""}">
       <div class="trp-abs">
         <div class="trp-title">Absolute time range</div>
@@ -689,7 +753,10 @@ function createTimeRangePicker(
   `;
   container.appendChild(root);
 
+  const prevBtn = $(".trp-prev", root);
+  const nextBtn = $(".trp-next", root);
   const toggleBtn = $(".trp-toggle", root);
+  const cancelBtn = $(".trp-cancel", root);
   const labelEl = $(".trp-label", root);
   const caretEl = $(".trp-caret", root);
   const popover = $(".trp-popover", root);
@@ -776,6 +843,40 @@ function createTimeRangePicker(
     caretEl.textContent = "▾";
   }
 
+  function setLoading(isLoading, cancelFn = null) {
+    root.classList.toggle("loading", isLoading);
+    prevBtn.disabled = isLoading;
+    toggleBtn.disabled = isLoading;
+    nextBtn.disabled = isLoading;
+    onCancelCallback = isLoading ? cancelFn : null;
+    if (isLoading) closePopover();
+  }
+
+  function commitPendingRange() {
+    previousRange = null;
+  }
+
+  function revertPendingRange() {
+    if (!previousRange) return;
+    fromRaw = previousRange.fromRaw;
+    toRaw = previousRange.toRaw;
+    previousRange = null;
+    try {
+      sessionStorage.setItem(
+        ACTIVE_RANGE_KEY,
+        JSON.stringify({ fromRaw, toRaw }),
+      );
+    } catch (_) {}
+    syncUI();
+  }
+
+  cancelBtn.addEventListener("click", () => {
+    const cancelFn = onCancelCallback;
+    revertPendingRange();
+    setLoading(false);
+    if (cancelFn) cancelFn();
+  });
+
   function applyRange(newFrom, newTo, isAbsoluteCommit = false) {
     const now = Date.now();
     const f = parseTimeExpr(newFrom, now);
@@ -788,6 +889,7 @@ function createTimeRangePicker(
       errEl.style.display = "block";
       return;
     }
+    previousRange = { fromRaw, toRaw };
     fromRaw = newFrom.trim();
     toRaw = newTo.trim();
     try {
@@ -890,11 +992,20 @@ function createTimeRangePicker(
     applyRange(formatDateTime(nextFrom), formatDateTime(nextTo), true);
   }
 
-  $(".trp-prev", root).addEventListener("click", () => shiftWindow(-1));
-  $(".trp-next", root).addEventListener("click", () => shiftWindow(1));
+  prevBtn.addEventListener("click", () => shiftWindow(-1));
+  nextBtn.addEventListener("click", () => shiftWindow(1));
 
   syncUI();
-  return { getWindow, toQueryString, setRange: applyRange };
+  const controller = {
+    getWindow,
+    toQueryString,
+    setRange: applyRange,
+    setLoading,
+    commitPendingRange,
+    revertPendingRange,
+  };
+  activeTimePicker = controller;
+  return controller;
 }
 
 document.addEventListener("DOMContentLoaded", () => {

@@ -203,6 +203,7 @@
       }
 
       document.addEventListener("shell-ready", () => {
+        let activeLoadController = null;
         const picker = createTimeRangePicker("#timePicker", {
           defaultKey: "today",
           onChange: () => load(),
@@ -216,18 +217,29 @@
         load();
 
         async function load() {
+          if (activeLoadController) activeLoadController.abort();
+          const controller = new AbortController();
+          activeLoadController = controller;
+
           const btn = $("#load");
           const err = $("#err");
           btn.disabled = true;
           err.style.display = "none";
-          $("#rows").innerHTML =
-            `<tr><td class="empty" colspan="7">Loading… (large time ranges may take a few seconds)</td></tr>`;
+          picker.setLoading(true, () => controller.abort());
+
+          if (state.all.length === 0) {
+            $("#rows").innerHTML =
+              `<tr><td class="empty" colspan="7">Loading… (large time ranges may take a few seconds)</td></tr>`;
+          }
+
           try {
             const win = picker.getWindow();
-            const res = await fetch(`/api/summary?${picker.toQueryString()}`);
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+            const data = await api(`/api/summary?${picker.toQueryString()}`, {
+              signal: controller.signal,
+            });
+            if (activeLoadController !== controller) return;
 
+            picker.commitPendingRange();
             state.all = data.devices;
             state.totals = data.totals;
             state.date = data.date;
@@ -239,6 +251,13 @@
             renderPie();
             setStatus(true);
           } catch (e) {
+            if (controller.signal.aborted || e?.name === "AbortError") {
+              if (activeLoadController === controller) {
+                setStatus(true, "Query cancelled");
+                table.render();
+              }
+              return;
+            }
             state.all = [];
             state.totals = null;
             err.textContent = `Failed to load summary: ${e.message}`;
@@ -248,7 +267,11 @@
             renderPie();
             setStatus(false);
           } finally {
-            btn.disabled = false;
+            if (activeLoadController === controller) {
+              activeLoadController = null;
+              btn.disabled = false;
+              picker.setLoading(false);
+            }
           }
         }
       });

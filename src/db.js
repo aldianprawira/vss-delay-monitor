@@ -25,13 +25,34 @@ for (const [poolName, pool] of [
   });
 }
 
-async function withTransaction(pool, workFn, { statementTimeoutMs } = {}) {
+async function withTransaction(
+  pool,
+  workFn,
+  { statementTimeoutMs, cancelOnCloseRes } = {},
+) {
   const client = await pool.connect();
   let connectionBroken = false;
+  let finished = false;
+
+  const onClientAbort = () => {
+    if (!finished && !cancelOnCloseRes.writableEnded && client.processID) {
+      // Cancel the in-flight PostgreSQL query immediately when the HTTP client aborts the request.
+      pool
+        .query("SELECT pg_cancel_backend($1)", [client.processID])
+        .catch(() => {});
+    }
+  };
+
+  if (cancelOnCloseRes) {
+    cancelOnCloseRes.on("close", onClientAbort);
+  }
+
   try {
     await client.query("BEGIN");
     if (statementTimeoutMs) {
-      await client.query(`SET LOCAL statement_timeout = ${Number(statementTimeoutMs)}`);
+      await client.query(
+        `SET LOCAL statement_timeout = ${Number(statementTimeoutMs)}`,
+      );
     }
     const result = await workFn(client);
     await client.query("COMMIT");
@@ -44,6 +65,10 @@ async function withTransaction(pool, workFn, { statementTimeoutMs } = {}) {
     }
     throw err;
   } finally {
+    finished = true;
+    if (cancelOnCloseRes) {
+      cancelOnCloseRes.off("close", onClientAbort);
+    }
     client.release(connectionBroken);
   }
 }
