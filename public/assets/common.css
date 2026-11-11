@@ -417,7 +417,7 @@ th.sortable:focus-visible,
 }
 
 .card h3 {
-  margin: 0 0 12px;
+  margin: 0 0 14px;
   font-size: clamp(0.86rem, 0.82rem + 0.15vw, 0.94rem);
   color: var(--text);
   font-weight: 600;
@@ -476,11 +476,15 @@ th.sortable:focus-visible,
 
 .chart-box {
   position: relative;
-  height: 260px;
+  height: 196px;
+}
+
+.chart-box.compact {
+  height: 168px;
 }
 
 .chart-box.tall {
-  height: 340px;
+  height: 320px;
 }
 
 .link-card {

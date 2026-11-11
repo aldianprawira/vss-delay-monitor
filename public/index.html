@@ -23,7 +23,7 @@
       <div class="grid even">
         <div class="card">
           <h3>Staleness status distribution</h3>
-          <div class="chart-box"><canvas id="stalePie"></canvas></div>
+          <div class="chart-box compact"><canvas id="stalePie"></canvas></div>
         </div>
 
         <div class="card">
@@ -39,19 +39,11 @@
               <tbody id="legend"></tbody>
             </table>
           </div>
-          <div class="kpi">
-            <div class="hint" style="white-space: normal; margin-top: 12px">
-              Calculated from the time the server last received a message from
-              the device (rather than <code>dtu</code>). If many devices
-              transition to OFFLINE simultaneously, check the ingestor
-              connection before assuming a fleet-wide device outage.
-            </div>
-          </div>
         </div>
 
         <div class="card">
           <h3>Delay distribution (online devices)</h3>
-          <div class="chart-box"><canvas id="delayPie"></canvas></div>
+          <div class="chart-box compact"><canvas id="delayPie"></canvas></div>
         </div>
       </div>
 

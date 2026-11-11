@@ -397,8 +397,21 @@ function pieConfig(labels, data, colors, { legendStats = true } = {}) {
       responsive: true,
       maintainAspectRatio: false,
       cutout: "62%",
+      layout: {
+        padding: { top: 2, bottom: 2, left: 4, right: 12 },
+      },
       plugins: {
-        legend: { position: "right" },
+        legend: {
+          position: "right",
+          labels: {
+            boxWidth: 12,
+            boxHeight: 12,
+            usePointStyle: true,
+            pointStyle: "rectRounded",
+            padding: 12,
+            font: { size: 12, weight: "500" },
+          },
+        },
         tooltip: {
           callbacks: {
             label: (c) => {
