@@ -6,6 +6,7 @@
     <title>Devices · Delay Monitor</title>
     <link rel="stylesheet" href="/assets/common.css" />
     <script src="/format.js"></script>
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
     <script src="/assets/common.js"></script>
   </head>
   <body
@@ -27,6 +28,7 @@
         <select id="fStale">
           <option value="">All statuses</option>
         </select>
+        <button id="export" class="btn-primary" disabled>Export Excel</button>
         <span class="spacer"></span>
         <span id="count" class="pill"></span>
       </div>
@@ -119,7 +121,67 @@
             <td><a class="btn-primary" href="${detailHref(d.device_id, d.device_name)}">Details</a></td>
           </tr>`;
         },
+        onAfterRender(list) {
+          $("#export").disabled = list.length === 0;
+        },
       });
+
+      function sanitizeFilenameToken(value) {
+        return String(value)
+          .replace(/^>/, "gt-")
+          .replace(/^</, "lt-")
+          .replace(/[^a-zA-Z0-9_-]+/g, "-")
+          .replace(/^-+|-+$/g, "");
+      }
+
+      function buildExportFilename() {
+        const parts = ["devices"];
+        if (state.q.trim()) {
+          parts.push(`search-${sanitizeFilenameToken(state.q.trim())}`);
+        }
+        parts.push(
+          `delay-${state.delay ? sanitizeFilenameToken(state.delay) : "all"}`,
+        );
+        parts.push(
+          `status-${state.stale ? sanitizeFilenameToken(state.stale) : "all"}`,
+        );
+        const timestamp = formatDateTime(Date.now())
+          .replace(" ", "_")
+          .replace(/:/g, "-");
+        parts.push(timestamp);
+        return `${parts.join("_")}.xlsx`;
+      }
+
+      function exportXlsx() {
+        if (!window.XLSX) {
+          alert(
+            "Failed to load Excel library. Please check your internet connection and reload the page.",
+          );
+          return;
+        }
+        const rows = table.getFilteredAndSorted().map((d) => ({
+          Device: d.device_name || "-",
+          "Device ID": String(d.device_id),
+          Delay: `${formatDelay(d.delay_ms)} (${d.delayCat.key})`,
+          "Last Seen": `${formatStaleness(d.age)} (${d.staleCat.key})`,
+          "Last DTU": new Date(d.last_dtu).toLocaleString(),
+        }));
+
+        const ws = XLSX.utils.json_to_sheet(rows, {
+          header: ["Device", "Device ID", "Delay", "Last Seen", "Last DTU"],
+        });
+        ws["!cols"] = [
+          { wch: 28 },
+          { wch: 24 },
+          { wch: 20 },
+          { wch: 24 },
+          { wch: 22 },
+        ];
+
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "Devices");
+        XLSX.writeFile(wb, buildExportFilename());
+      }
 
       document.addEventListener("shell-ready", () => {
         DELAY_CATEGORIES.forEach((c) =>
@@ -136,6 +198,7 @@
         );
 
         table.bindControls();
+        $("#export").addEventListener("click", exportXlsx);
 
         $("#fDelay").addEventListener("change", (e) => {
           state.delay = e.target.value;
