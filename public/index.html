@@ -3,55 +3,91 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Overview · Delay Monitor</title>
+    <title>Overview · VSS Monitoring</title>
     <link rel="stylesheet" href="/assets/common.css" />
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+    <script
+      defer
+      src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"
+    ></script>
     <script src="/format.js"></script>
     <script src="/assets/common.js"></script>
   </head>
   <body
     data-page="index"
     data-title="Overview"
-    data-sub="Fleet-wide device telemetry overview"
+    data-sub="Real-time fleet staleness and delay telemetry"
   >
     <main class="content">
       <div class="grid kpis" id="kpis"></div>
 
-      <div class="grid two">
+      <div class="grid even">
         <div class="card">
-          <h3>Current delay distribution</h3>
+          <h3>Staleness status distribution</h3>
+          <div class="chart-box"><canvas id="stalePie"></canvas></div>
+        </div>
+
+        <div class="card">
+          <h3>Status legend</h3>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th scope="col">Status</th>
+                  <th scope="col">Silent duration</th>
+                </tr>
+              </thead>
+              <tbody id="legend"></tbody>
+            </table>
+          </div>
+          <div class="kpi">
+            <div class="hint" style="white-space: normal; margin-top: 12px">
+              Calculated from the time the server last received a message from
+              the device (rather than <code>dtu</code>). If many devices
+              transition to OFFLINE simultaneously, check the ingestor
+              connection before assuming a fleet-wide device outage.
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Delay distribution (online devices)</h3>
           <div class="chart-box"><canvas id="delayPie"></canvas></div>
         </div>
-        <div class="card">
-          <h3 id="trendTitle">Delay trend</h3>
-          <div class="chart-box"><canvas id="trend"></canvas></div>
+      </div>
+
+      <div class="card" style="margin-bottom: 16px">
+        <h3>Top 20 longest-silent devices</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th scope="col">#</th>
+                <th scope="col">Device</th>
+                <th scope="col">Device ID</th>
+                <th scope="col">Last Seen</th>
+                <th scope="col">Status</th>
+                <th scope="col"><span class="sr-only">Actions</span></th>
+              </tr>
+            </thead>
+            <tbody id="stale"></tbody>
+          </table>
         </div>
       </div>
 
       <div class="grid even">
-        <a class="card link-card" href="/delay.html"
-          ><h3>Delay</h3>
-          <p>
-            Category distribution, trends, and devices with the highest delay.
-          </p></a
-        >
-        <a class="card link-card" href="/staleness.html"
-          ><h3>Staleness</h3>
-          <p>Devices that have not reported recently.</p></a
-        >
         <a class="card link-card" href="/traffic.html"
           ><h3>Traffic</h3>
           <p>Message volume per action from the upstream WebSocket.</p></a
         >
         <a class="card link-card" href="/devices.html"
-          ><h3>Devices</h3>
-          <p>Complete device directory with filtering and sorting.</p></a
+          ><h3>Live Monitoring</h3>
+          <p>Complete device directory with filtering, sorting, and export.</p></a
         >
         <a class="card link-card" href="/summary.html"
-          ><h3>Summary</h3>
+          ><h3>Daily Summary</h3>
           <p>
-            Minimum, average, and maximum delay per device for a specific time
-            range.
+            Midnight snapshot of offline devices and daily per-device delay
+            metrics.
           </p></a
         >
       </div>
@@ -59,63 +95,105 @@
 
     <script>
       document.addEventListener("shell-ready", () => {
-        let refresh;
-        const picker = createTimeRangePicker("#timePicker", {
-          defaultKey: "1h",
-          onChange: () => refresh && refresh(),
-        });
+        const rangeLabel = (c) =>
+          !Number.isFinite(c.max)
+            ? `more than ${formatAxisDelay(c.min)}`
+            : c.min === 0
+              ? `less than ${formatAxisDelay(c.max)}`
+              : `${formatAxisDelay(c.min)} to ${formatAxisDelay(c.max)}`;
 
-        refresh = poll(async () => {
-          const qs = picker.toQueryString();
-          const win = picker.getWindow();
-          $("#trendTitle").textContent = `Delay trend (${win.label})`;
+        $("#legend").innerHTML = STALENESS_CATEGORIES.map(
+          (c) => `<tr>
+            <td>${badge(c)}</td>
+            <td>${esc(rangeLabel(c))}</td>
+          </tr>`,
+        ).join("");
 
-          const [devices, summary, timeline, traffic] = await Promise.all([
-            api("/api/devices"),
-            api(`/api/stats/summary?${qs}`),
-            api(`/api/stats/timeline?${qs}`),
-            api("/api/traffic/history?range=15m"),
-          ]);
-
+        poll(async () => {
+          const devices = await api("/api/devices");
           const now = Date.now();
-          const online = devices.filter(
-            (d) =>
-              getStalenessCategory(now - new Date(d.last_received).getTime())
-                .key === "ONLINE",
-          ).length;
-          const over5s = countDelayedDevices(summary.categories);
 
-          const prevMin = Math.floor(now / 60000) * 60000 - 60000;
-          const prevTotal = traffic
-            .filter((r) => new Date(r.bucket).getTime() === prevMin)
-            .reduce((s, r) => s + Number(r.count), 0);
+          const staleCounts = Object.fromEntries(
+            STALENESS_CATEGORIES.map((c) => [c.key, 0]),
+          );
+          const onlineDelayCounts = Object.fromEntries(
+            DELAY_CATEGORIES.map((c) => [c.key, 0]),
+          );
 
-          const worst = summary.currentWorst;
+          const enriched = devices.map((d) => {
+            const age = now - new Date(d.last_received).getTime();
+            const staleCat = getStalenessCategory(age);
+            const delayCat = getCategory(d.delay_ms);
+            staleCounts[staleCat.key]++;
+            if (staleCat.key === "ONLINE") {
+              onlineDelayCounts[delayCat.key]++;
+            }
+            return { ...d, age, staleCat, delayCat };
+          });
+
+          const totalDevices = devices.length;
+          const onlineCount = staleCounts.ONLINE;
+          const offlineCount = staleCounts.OFFLINE;
+          const onlineDelayedOver5s = DELAY_CATEGORIES.filter(
+            (c) => c.key !== "0-5s",
+          ).reduce((sum, c) => sum + onlineDelayCounts[c.key], 0);
+
           $("#kpis").innerHTML =
-            kpi("Total devices", summary.totalDevices.toLocaleString()) +
             kpi(
-              "Online devices",
-              `${online.toLocaleString()}`,
-              `${pct(online, summary.totalDevices)}% of total`,
+              "Total devices",
+              totalDevices.toLocaleString(),
+              `${onlineCount.toLocaleString()} online · ${staleCounts.WARNING.toLocaleString()} warning`,
+              "primary",
             ) +
             kpi(
-              "Delay > 5s",
-              over5s.toLocaleString(),
-              `${pct(over5s, summary.totalDevices)}% of total`,
+              "Total offline",
+              offlineCount.toLocaleString(),
+              `${pct(offlineCount, totalDevices)}% of total devices`,
+              offlineCount > 0 ? "err" : "ok",
             ) +
             kpi(
-              "Highest delay",
-              worst ? formatDelay(worst.delay_ms) : "-",
-              worst ? deviceName(worst) : "",
-            ) +
-            kpi(
-              "Last minute traffic",
-              prevTotal.toLocaleString(),
-              "messages across all actions",
+              "Total devices delay > 5s",
+              onlineDelayedOver5s.toLocaleString(),
+              `${pct(onlineDelayedOver5s, onlineCount)}% of ${onlineCount.toLocaleString()} online devices`,
+              onlineDelayedOver5s > 0 ? "warn" : "ok",
             );
 
-          upsertChart("delayPie", categoryPieConfig(summary.categories));
-          upsertChart("trend", delayTrendConfig(timeline));
+          upsertChart(
+            "stalePie",
+            pieConfig(
+              STALENESS_CATEGORIES.map((c) => c.key),
+              STALENESS_CATEGORIES.map((c) => staleCounts[c.key]),
+              STALENESS_CATEGORIES.map((c) => c.color),
+              { legendStats: true },
+            ),
+          );
+
+          upsertChart(
+            "delayPie",
+            pieConfig(
+              DELAY_CATEGORIES.map((c) => c.key),
+              DELAY_CATEGORIES.map((c) => onlineDelayCounts[c.key]),
+              DELAY_CATEGORIES.map((c) => c.color),
+              { legendStats: true },
+            ),
+          );
+
+          $("#stale").innerHTML =
+            enriched
+              .sort((a, b) => b.age - a.age)
+              .slice(0, 20)
+              .map(
+                (d, i) => `<tr>
+                <td>${i + 1}</td>
+                <td>${esc(d.device_name || "-")}</td>
+                <td class="mono">${esc(d.device_id)}</td>
+                <td>${formatStaleness(d.age)}</td>
+                <td>${badge(d.staleCat)}</td>
+                <td><a class="btn-primary" href="${detailHref(d.device_id, d.device_name)}">Details</a></td>
+              </tr>`,
+              )
+              .join("") ||
+            `<tr><td class="empty" colspan="6">No devices registered yet. Verify that the upstream WebSocket ingestor is connected.</td></tr>`;
         }, 5000);
       });
     </script>

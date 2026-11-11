@@ -1,31 +1,13 @@
 const DELAY_CATEGORIES = [
-  { key: "0-5s", min: 0, max: 5000, color: "#28a745" },
-  { key: "5s-1m", min: 5000, max: 60000, color: "#ffc107" },
-  { key: ">1m", min: 60000, max: Infinity, color: "#dc3545" },
+  { key: "0-5s", min: 0, max: 5000, color: "#059669", tone: "ok" },
+  { key: "5s-1m", min: 5000, max: 60000, color: "#d97706", tone: "warn" },
+  { key: ">1m", min: 60000, max: Infinity, color: "#dc2626", tone: "err" },
 ];
 
 const STALENESS_CATEGORIES = [
-  {
-    key: "ONLINE",
-    min: 0,
-    max: 600000,
-    color: "#28a745",
-    desc: "Device reported recently. Operating normally; no action required.",
-  },
-  {
-    key: "WARNING",
-    min: 600000,
-    max: 3600000,
-    color: "#ffc107",
-    desc: "Device has been silent for a while. Potential network, power, or hardware issue; check recommended.",
-  },
-  {
-    key: "OFFLINE",
-    min: 3600000,
-    max: Infinity,
-    color: "#dc3545",
-    desc: "Device has not reported for an extended period. Consider disconnected until a new report arrives.",
-  },
+  { key: "ONLINE", min: 0, max: 3600000, color: "#059669", tone: "ok" },
+  { key: "WARNING", min: 3600000, max: 21600000, color: "#d97706", tone: "warn" },
+  { key: "OFFLINE", min: 21600000, max: Infinity, color: "#dc2626", tone: "err" },
 ];
 
 // Suppress negative signs when sub-second values round down to 0 to prevent rendering "-0s".

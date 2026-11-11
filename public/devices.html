@@ -3,32 +3,40 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Devices · Delay Monitor</title>
+    <title>Live Monitoring · VSS Monitoring</title>
     <link rel="stylesheet" href="/assets/common.css" />
     <script src="/format.js"></script>
-    <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+    <script
+      async
+      src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"
+    ></script>
     <script src="/assets/common.js"></script>
   </head>
   <body
     data-page="devices"
-    data-title="Devices"
+    data-title="Live Monitoring"
     data-sub="Latest telemetry status for each device"
   >
     <main class="content">
       <div class="toolbar">
+        <label for="q" class="sr-only">Search by device name or ID</label>
         <input
           id="q"
           type="search"
           placeholder="Search by name or ID…"
           style="min-width: 240px"
         />
+        <label for="fDelay" class="sr-only">Filter by delay category</label>
         <select id="fDelay">
           <option value="">All delay categories</option>
         </select>
+        <label for="fStale" class="sr-only">Filter by staleness status</label>
         <select id="fStale">
           <option value="">All statuses</option>
         </select>
-        <button id="export" class="btn-primary" disabled>Export Excel</button>
+        <button id="export" type="button" class="btn-primary" disabled>
+          Export Excel
+        </button>
         <span class="spacer"></span>
         <span id="count" class="pill"></span>
       </div>
@@ -38,152 +46,162 @@
           <table>
             <thead>
               <tr>
-                <th class="sortable" data-sort="device_name">
+                <th scope="col" class="sortable" data-sort="device_name">
                   Device <span class="si"></span>
                 </th>
-                <th class="sortable" data-sort="device_id">
+                <th scope="col" class="sortable" data-sort="device_id">
                   Device ID <span class="si"></span>
                 </th>
-                <th class="sortable" data-sort="delay_ms">
+                <th scope="col" class="sortable" data-sort="delay_ms">
                   Delay <span class="si"></span>
                 </th>
-                <th class="sortable" data-sort="last_received">
+                <th scope="col" class="sortable" data-sort="last_received">
                   Last Seen <span class="si"></span>
                 </th>
-                <th class="sortable" data-sort="last_dtu">
+                <th scope="col" class="sortable" data-sort="last_dtu">
                   Last DTU <span class="si"></span>
                 </th>
-                <th></th>
+                <th scope="col"><span class="sr-only">Actions</span></th>
               </tr>
             </thead>
             <tbody id="rows"></tbody>
           </table>
         </div>
         <div class="pager">
-          <button id="prev">‹ Previous</button>
+          <label for="pageSize">
+            Rows per page
+            <select id="pageSize">
+              <option value="50" selected>50</option>
+              <option value="100">100</option>
+              <option value="200">200</option>
+            </select>
+          </label>
+          <button id="prev" type="button">‹ Previous</button>
           <span id="pageInfo"></span>
-          <button id="next">Next ›</button>
+          <button id="next" type="button">Next ›</button>
         </div>
       </div>
     </main>
 
     <script>
-      const state = {
-        all: [],
-        q: "",
-        delay: "",
-        stale: "",
-        sort: "delay_ms",
-        dir: "desc",
-        page: 0,
-      };
-
-      const table = createTableController({
-        state,
-        colSpan: 6,
-        emptyMessage: "No matching devices found",
-        prepareItems(s) {
-          const now = Date.now();
-          const q = s.q.trim().toLowerCase();
-          return s.all
-            .map((d) => {
-              const age = now - new Date(d.last_received).getTime();
-              return {
-                ...d,
-                age,
-                delayCat: getCategory(d.delay_ms),
-                staleCat: getStalenessCategory(age),
-              };
-            })
-            .filter(
-              (d) =>
-                (!q ||
-                  (d.device_name || "").toLowerCase().includes(q) ||
-                  String(d.device_id).toLowerCase().includes(q)) &&
-                (!s.delay || d.delayCat.key === s.delay) &&
-                (!s.stale || d.staleCat.key === s.stale),
-            );
-        },
-        getSortValue(d, col) {
-          if (col === "delay_ms") return Number(d[col]);
-          if (col === "last_received" || col === "last_dtu") {
-            return new Date(d[col]).getTime();
-          }
-          return String(d[col] ?? "").toLowerCase();
-        },
-        renderRow(d) {
-          return `<tr>
-            <td>${esc(d.device_name || "-")}</td>
-            <td class="mono">${esc(d.device_id)}</td>
-            <td>${formatDelay(d.delay_ms)} ${badge(d.delayCat)}</td>
-            <td>${formatStaleness(d.age)} ${badge(d.staleCat)}</td>
-            <td>${new Date(d.last_dtu).toLocaleString()}</td>
-            <td><a class="btn-primary" href="${detailHref(d.device_id, d.device_name)}">Details</a></td>
-          </tr>`;
-        },
-        onAfterRender(list) {
-          $("#export").disabled = list.length === 0;
-        },
-      });
-
-      function sanitizeFilenameToken(value) {
-        return String(value)
-          .replace(/^>/, "gt-")
-          .replace(/^</, "lt-")
-          .replace(/[^a-zA-Z0-9_-]+/g, "-")
-          .replace(/^-+|-+$/g, "");
-      }
-
-      function buildExportFilename() {
-        const parts = ["devices"];
-        if (state.q.trim()) {
-          parts.push(`search-${sanitizeFilenameToken(state.q.trim())}`);
-        }
-        parts.push(
-          `delay-${state.delay ? sanitizeFilenameToken(state.delay) : "all"}`,
-        );
-        parts.push(
-          `status-${state.stale ? sanitizeFilenameToken(state.stale) : "all"}`,
-        );
-        const timestamp = formatDateTime(Date.now())
-          .replace(" ", "_")
-          .replace(/:/g, "-");
-        parts.push(timestamp);
-        return `${parts.join("_")}.xlsx`;
-      }
-
-      function exportXlsx() {
-        if (!window.XLSX) {
-          alert(
-            "Failed to load Excel library. Please check your internet connection and reload the page.",
-          );
-          return;
-        }
-        const rows = table.getFilteredAndSorted().map((d) => ({
-          Device: d.device_name || "-",
-          "Device ID": String(d.device_id),
-          Delay: `${formatDelay(d.delay_ms)} (${d.delayCat.key})`,
-          "Last Seen": `${formatStaleness(d.age)} (${d.staleCat.key})`,
-          "Last DTU": new Date(d.last_dtu).toLocaleString(),
-        }));
-
-        const ws = XLSX.utils.json_to_sheet(rows, {
-          header: ["Device", "Device ID", "Delay", "Last Seen", "Last DTU"],
-        });
-        ws["!cols"] = [
-          { wch: 28 },
-          { wch: 24 },
-          { wch: 20 },
-          { wch: 24 },
-          { wch: 22 },
-        ];
-
-        const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, ws, "Devices");
-        XLSX.writeFile(wb, buildExportFilename());
-      }
-
       document.addEventListener("shell-ready", () => {
+        const state = {
+          all: [],
+          q: "",
+          delay: "",
+          stale: "",
+          sort: "delay_ms",
+          dir: "desc",
+          page: 0,
+          pageSize: 50,
+        };
+
+        const table = createTableController({
+          state,
+          colSpan: 6,
+          emptyMessage:
+            "No devices match the current search or filter criteria. Clear filters to view all devices.",
+          prepareItems(s) {
+            const now = Date.now();
+            const q = s.q.trim().toLowerCase();
+            return s.all
+              .map((d) => {
+                const age = now - new Date(d.last_received).getTime();
+                return {
+                  ...d,
+                  age,
+                  delayCat: getCategory(d.delay_ms),
+                  staleCat: getStalenessCategory(age),
+                };
+              })
+              .filter(
+                (d) =>
+                  (!q ||
+                    (d.device_name || "").toLowerCase().includes(q) ||
+                    String(d.device_id).toLowerCase().includes(q)) &&
+                  (!s.delay || d.delayCat.key === s.delay) &&
+                  (!s.stale || d.staleCat.key === s.stale),
+              );
+          },
+          getSortValue(d, col) {
+            if (col === "delay_ms") return Number(d[col]);
+            if (col === "last_received" || col === "last_dtu") {
+              return new Date(d[col]).getTime();
+            }
+            return String(d[col] ?? "").toLowerCase();
+          },
+          renderRow(d) {
+            return `<tr>
+              <td>${esc(d.device_name || "-")}</td>
+              <td class="mono">${esc(d.device_id)}</td>
+              <td>${formatDelay(d.delay_ms)} ${badge(d.delayCat)}</td>
+              <td>${formatStaleness(d.age)} ${badge(d.staleCat)}</td>
+              <td>${new Date(d.last_dtu).toLocaleString()}</td>
+              <td><a class="btn-primary" href="${detailHref(d.device_id, d.device_name)}">Details</a></td>
+            </tr>`;
+          },
+          onAfterRender(list) {
+            $("#export").disabled = list.length === 0;
+          },
+        });
+
+        function sanitizeFilenameToken(value) {
+          return String(value)
+            .replace(/^>/, "gt-")
+            .replace(/^</, "lt-")
+            .replace(/[^a-zA-Z0-9_-]+/g, "-")
+            .replace(/^-+|-+$/g, "");
+        }
+
+        function buildExportFilename() {
+          const parts = ["devices"];
+          if (state.q.trim()) {
+            parts.push(`search-${sanitizeFilenameToken(state.q.trim())}`);
+          }
+          parts.push(
+            `delay-${state.delay ? sanitizeFilenameToken(state.delay) : "all"}`,
+          );
+          parts.push(
+            `status-${state.stale ? sanitizeFilenameToken(state.stale) : "all"}`,
+          );
+          const timestamp = formatDateTime(Date.now())
+            .replace(" ", "_")
+            .replace(/:/g, "-");
+          parts.push(timestamp);
+          return `${parts.join("_")}.xlsx`;
+        }
+
+        function exportXlsx() {
+          if (!window.XLSX) {
+            alert(
+              "Failed to load Excel library. Please check your internet connection and reload the page.",
+            );
+            return;
+          }
+          const rows = table.getFilteredAndSorted().map((d) => ({
+            Device: d.device_name || "-",
+            "Device ID": String(d.device_id),
+            Delay: `${formatDelay(d.delay_ms)} (${d.delayCat.key})`,
+            "Last Seen": `${formatStaleness(d.age)} (${d.staleCat.key})`,
+            "Last DTU": new Date(d.last_dtu).toLocaleString(),
+          }));
+
+          const ws = XLSX.utils.json_to_sheet(rows, {
+            header: ["Device", "Device ID", "Delay", "Last Seen", "Last DTU"],
+          });
+          ws["!cols"] = [
+            { wch: 28 },
+            { wch: 24 },
+            { wch: 20 },
+            { wch: 24 },
+            { wch: 22 },
+          ];
+
+          const wb = XLSX.utils.book_new();
+          XLSX.utils.book_append_sheet(wb, ws, "Live Monitoring");
+          XLSX.writeFile(wb, buildExportFilename());
+        }
+
         DELAY_CATEGORIES.forEach((c) =>
           $("#fDelay").insertAdjacentHTML(
             "beforeend",

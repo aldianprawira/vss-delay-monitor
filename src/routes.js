@@ -10,14 +10,12 @@ const {
   DEVICE_TZ,
   HEALTH_DATA_STALE_MS,
   MAX_BUFFER_RECORDS,
-  HISTORY_RETENTION_DAYS,
-  SUMMARY_TIMEOUT_MS,
 } = require("./config");
 const {
   apiPool,
-  withTransaction,
   isDatabaseReachable,
 } = require("./db");
+const { getOrGenerateDailySummary } = require("./dailySummary");
 const {
   ingest,
   trafficCumulative,
@@ -323,126 +321,31 @@ router.get(
   }),
 );
 
-const summaryCache = new Map();
-
 router.get(
   "/api/summary",
   asyncHandler(async (req, res) => {
-    let start;
-    let end;
-    let dateLabel;
-
-    if (req.query.from || req.query.to || req.query.range) {
-      const window = getTimeWindow(req);
-      start = dayjs(window.from).tz(DEVICE_TZ);
-      end = dayjs(window.to).tz(DEVICE_TZ);
-      dateLabel = start.format("YYYY-MM-DD");
-    } else {
-      const date = String(
-        req.query.date || dayjs().tz(DEVICE_TZ).format("YYYY-MM-DD"),
-      );
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-        return res
-          .status(400)
-          .json({ error: "Invalid date format; expected YYYY-MM-DD." });
-      }
-      // Align day boundaries to the device timezone (WIB) rather than server UTC.
-      start = dayjs.tz(`${date} 00:00:00`, DEVICE_TZ);
-      if (!start.isValid()) {
-        return res.status(400).json({ error: "Invalid calendar date." });
-      }
-      end = start.add(1, "day");
-      dateLabel = date;
-    }
-
-    const oldestRetained = dayjs()
-      .subtract(HISTORY_RETENTION_DAYS, "day")
-      .startOf("day");
-    if (start.isBefore(oldestRetained)) {
-      return res.status(400).json({
-        error: `Raw history data is only retained for ${HISTORY_RETENTION_DAYS} days.`,
-      });
-    }
-    if (start.isAfter(dayjs())) {
+    const defaultDate = dayjs()
+      .tz(DEVICE_TZ)
+      .subtract(1, "day")
+      .format("YYYY-MM-DD");
+    const date = String(req.query.date || defaultDate);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
       return res
         .status(400)
-        .json({ error: "Start time cannot be in the future." });
+        .json({ error: "Invalid date format; expected YYYY-MM-DD." });
     }
 
-    // Completed past windows are immutable and cached for an hour, whereas active windows refresh every minute.
-    const isOngoing = end.isAfter(dayjs().subtract(1, "minute"));
-    const ttl = isOngoing ? 60 * 1000 : 60 * 60 * 1000;
-    const cacheKey = `${Math.floor(start.valueOf() / 60000)}_${Math.floor(end.valueOf() / 60000)}`;
-    const cached = summaryCache.get(cacheKey);
-    if (cached && Date.now() - cached.at < cached.ttl) {
-      return res.json(cached.data);
+    try {
+      const data = await getOrGenerateDailySummary(date, {
+        cancelOnCloseRes: res,
+      });
+      res.json(data);
+    } catch (err) {
+      if (err.status === 400) {
+        return res.status(400).json({ error: err.message });
+      }
+      throw err;
     }
-
-    const { aggRows, registeredCount } = await withTransaction(
-      apiPool,
-      async (client) => {
-        const aggResult = await client.query(
-          `SELECT device_id,
-                  MAX(device_name)       AS device_name,
-                  COUNT(*)::int          AS cnt,
-                  MIN(delay_ms)::bigint  AS min_delay,
-                  MAX(delay_ms)::bigint  AS max_delay,
-                  AVG(delay_ms)::float8  AS avg_delay
-           FROM device_delay_history
-           WHERE received_at >= $1 AND received_at <= $2
-           GROUP BY device_id`,
-          [start.toDate(), end.toDate()],
-        );
-        const regResult = await client.query(
-          "SELECT COUNT(*) AS n FROM device_latest_state",
-        );
-        return {
-          aggRows: aggResult.rows,
-          registeredCount: Number(regResult.rows[0].n),
-        };
-      },
-      { statementTimeoutMs: SUMMARY_TIMEOUT_MS, cancelOnCloseRes: res },
-    );
-
-    // Devices reporting exclusively 0ms delays are inactive or uncalibrated and excluded from the report.
-    const devices = aggRows
-      .filter(
-        (d) =>
-          !(
-            Number(d.min_delay) === 0 &&
-            Number(d.max_delay) === 0 &&
-            d.avg_delay === 0
-          ),
-      )
-      .map((d) => ({
-        deviceId: d.device_id,
-        deviceName: d.device_name,
-        count: d.cnt,
-        minDelay: Number(d.min_delay),
-        maxDelay: Number(d.max_delay),
-        avgDelay: Math.round(d.avg_delay),
-      }))
-      .sort((a, b) => b.maxDelay - a.maxDelay);
-
-    const data = {
-      date: dateLabel,
-      range: { from: start.toISOString(), to: end.toISOString() },
-      totals: {
-        registeredDevices: registeredCount,
-        sentData: aggRows.length,
-        noData: Math.max(registeredCount - aggRows.length, 0),
-        excludedZero: aggRows.length - devices.length,
-        shown: devices.length,
-        records: aggRows.reduce((sum, d) => sum + d.cnt, 0),
-      },
-      devices,
-    };
-
-    if (summaryCache.size > 30) {
-      summaryCache.delete(summaryCache.keys().next().value);
-    }
-    summaryCache.set(cacheKey, { at: Date.now(), ttl, data });
-    res.json(data);
   }),
 );
 

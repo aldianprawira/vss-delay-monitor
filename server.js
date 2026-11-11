@@ -4,6 +4,7 @@ const { startStatsLogger } = require("./src/state");
 const { startIngestor } = require("./src/ingestor");
 const { startWriterLoops } = require("./src/writer");
 const { startPartitionMaintenance } = require("./src/maintenance");
+const { startDailySummaryScheduler } = require("./src/dailySummary");
 const routes = require("./src/routes");
 
 process.on("unhandledRejection", (reason) => {
@@ -40,4 +41,5 @@ startIngestor();
 // Ensure daily partitions exist before starting database write loops so initial batches do not spill into the default partition.
 startPartitionMaintenance().finally(() => {
   startWriterLoops();
+  startDailySummaryScheduler();
 });

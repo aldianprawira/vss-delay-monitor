@@ -1,11 +1,20 @@
 const NAV = [
   { href: "/index.html", key: "index", label: "Overview" },
-  { href: "/delay.html", key: "delay", label: "Delay" },
-  { href: "/staleness.html", key: "staleness", label: "Staleness" },
   { href: "/traffic.html", key: "traffic", label: "Traffic" },
-  { href: "/devices.html", key: "devices", label: "Devices" },
-  { href: "/summary.html", key: "summary", label: "Summary" },
+  { href: "/devices.html", key: "devices", label: "Live Monitoring" },
+  { href: "/summary.html", key: "summary", label: "Daily Summary" },
 ];
+
+const THEME_STORAGE_KEY = "vss_theme";
+
+const ICONS = {
+  clock: `<svg class="trp-icon trp-clock" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="8" cy="8" r="6.2"/><path d="M8 4.5V8l2.4 1.6" stroke-linecap="round"/></svg>`,
+  calendar: `<svg class="trp-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="2.2" y="3.2" width="11.6" height="10.6" rx="1.8"/><path d="M5 1.8v2.4M11 1.8v2.4M2.2 6.4h11.6" stroke-linecap="round"/></svg>`,
+  copy: `<svg class="trp-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="5.2" y="5.2" width="8.6" height="8.6" rx="1.5"/><path d="M3.5 10.8H2.8a1 1 0 0 1-1-1V2.8a1 1 0 0 1 1-1h7a1 1 0 0 1 1 1v.7" stroke-linecap="round"/></svg>`,
+  paste: `<svg class="trp-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M5.5 2.5h5v2h-5z"/><rect x="3" y="3.5" width="10" height="10.5" rx="1.5"/></svg>`,
+  sun: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="8" cy="8" r="3.2"/><path d="M8 1.5v1.8M8 12.7v1.8M1.5 8h1.8M12.7 8h1.8M3.4 3.4l1.3 1.3M11.3 11.3l1.3 1.3M12.6 3.4l-1.3 1.3M4.7 11.3l-1.3 1.3" stroke-linecap="round"/></svg>`,
+  moon: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M13.2 9.8A5.6 5.6 0 0 1 6.2 2.8a5.6 5.6 0 1 0 7 7Z" stroke-linejoin="round"/></svg>`,
+};
 
 const $ = (sel, root = document) => root.querySelector(sel);
 
@@ -21,8 +30,78 @@ const esc = (v) =>
 
 const pct = (n, total) => (total > 0 ? ((n / total) * 100).toFixed(1) : "0.0");
 
+const charts = {};
 let activeQueryController = null;
 let activeTimePicker = null;
+let activePollTrigger = null;
+
+function getCurrentTheme() {
+  try {
+    const saved = localStorage.getItem(THEME_STORAGE_KEY);
+    if (saved === "dark" || saved === "light") return saved;
+  } catch (_) {}
+  return "light";
+}
+
+function getThemeChartTokens() {
+  const isDark = document.documentElement.dataset.theme === "dark";
+  return {
+    textColor: isDark ? "#94a3b8" : "#475569",
+    gridColor: isDark ? "#1e293b" : "#e2e8f0",
+    surfaceColor: isDark ? "#111827" : "#ffffff",
+  };
+}
+
+function applyTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  try {
+    localStorage.setItem(THEME_STORAGE_KEY, theme);
+  } catch (_) {}
+
+  const btn = $("#themeToggle");
+  if (btn) {
+    const isDark = theme === "dark";
+    btn.innerHTML = `${isDark ? ICONS.sun : ICONS.moon}<span>${isDark ? "Light" : "Dark"}</span>`;
+    btn.setAttribute(
+      "aria-label",
+      isDark ? "Switch to light theme" : "Switch to dark theme",
+    );
+    btn.setAttribute("aria-pressed", String(isDark));
+  }
+
+  if (window.Chart) {
+    const tokens = getThemeChartTokens();
+    Chart.defaults.color = tokens.textColor;
+    Object.values(charts).forEach((chart) => {
+      if (chart.config.type === "doughnut") {
+        chart.data.datasets.forEach((ds) => {
+          ds.borderColor = tokens.surfaceColor;
+        });
+      }
+      if (chart.options?.scales?.y?.grid) {
+        chart.options.scales.y.grid.color = tokens.gridColor;
+      }
+      chart.update("none");
+    });
+  }
+}
+
+// Apply saved theme immediately so the document does not flash before DOMContentLoaded.
+applyTheme(getCurrentTheme());
+
+// Load Google Fonts asynchronously so external font fetches never block CSSOM construction or page navigation.
+if (document.head && !document.getElementById("vssFonts")) {
+  const fontLink = document.createElement("link");
+  fontLink.id = "vssFonts";
+  fontLink.rel = "stylesheet";
+  fontLink.href =
+    "https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap";
+  fontLink.media = "print";
+  fontLink.onload = () => {
+    fontLink.media = "all";
+  };
+  document.head.appendChild(fontLink);
+}
 
 async function api(url, options = {}) {
   const signal =
@@ -42,20 +121,37 @@ async function api(url, options = {}) {
   return res.json();
 }
 
-function badge(cat) {
-  return `<span class="badge" style="--c:${esc(cat.color)}">${esc(cat.key)}</span>`;
+function inferTone(cat) {
+  if (!cat) return "info";
+  if (cat.tone) return cat.tone;
+  const k = String(cat.key || "").toUpperCase();
+  if (k === "ONLINE" || k === "0-5S") return "ok";
+  if (k === "WARNING" || k === "5S-1M") return "warn";
+  if (k === "OFFLINE" || k === ">1M") return "err";
+  return "info";
 }
 
+function badge(cat) {
+  const tone = inferTone(cat);
+  return `<span class="badge badge-${esc(tone)}">${esc(cat.key)}</span>`;
+}
+
+let shellBuilt = false;
+
 function buildShell() {
-  const page = document.body.dataset.page;
+  if (shellBuilt) return;
   const content = $("main.content");
+  if (!content) return;
+  shellBuilt = true;
+
+  const page = document.body.dataset.page;
 
   const sidebar = document.createElement("aside");
   sidebar.className = "sidebar";
   sidebar.innerHTML = `
-    <div class="brand">VSS Delay Monitor<small>Device telemetry</small></div>
-    <nav class="nav">
-      ${NAV.map((n) => `<a href="${n.href}" class="${n.key === page ? "active" : ""}">${n.label}</a>`).join("")}
+    <div class="brand">VSS Monitoring<small>by IT Operations</small></div>
+    <nav class="nav" aria-label="Primary navigation">
+      ${NAV.map((n) => `<a href="${n.href}" class="${n.key === page ? "active" : ""}" ${n.key === page ? 'aria-current="page"' : ""}>${n.label}</a>`).join("")}
     </nav>`;
 
   const main = document.createElement("div");
@@ -69,14 +165,57 @@ function buildShell() {
       <div class="status">
         <div id="timePicker"></div>
         <span id="ingest" class="pill" title="Upstream data ingestion status">Ingestor: …</span>
-        <span id="conn" class="pill">Loading…</span>
+        <span id="conn" class="pill" aria-live="polite">Loading…</span>
+        <button id="themeToggle" type="button" class="theme-toggle"></button>
       </div>
     </header>`;
 
   content.parentNode.insertBefore(sidebar, content);
   content.parentNode.insertBefore(main, content);
   main.appendChild(content);
-  content.insertAdjacentHTML("afterbegin", '<div id="ingestBanner"></div>');
+  content.insertAdjacentHTML(
+    "afterbegin",
+    '<div id="ingestBanner"></div><div id="pageError" aria-live="assertive"></div>',
+  );
+  document.body.classList.add("shell-mounted");
+
+  applyTheme(getCurrentTheme());
+  $("#themeToggle").addEventListener("click", () => {
+    applyTheme(getCurrentTheme() === "dark" ? "light" : "dark");
+  });
+
+  const kpisEl = $("#kpis");
+  if (kpisEl && !kpisEl.innerHTML.trim()) {
+    kpisEl.innerHTML = `<div class="card state-msg">Loading telemetry metrics…</div>`;
+  }
+  document.querySelectorAll("tbody").forEach((tb) => {
+    if (!tb.innerHTML.trim()) {
+      const cols =
+        tb.closest("table")?.querySelectorAll("thead th").length || 1;
+      tb.innerHTML = `<tr><td class="empty" colspan="${cols}">Loading telemetry data…</td></tr>`;
+    }
+  });
+}
+
+function renderPageError(err) {
+  const box = $("#pageError");
+  if (!box) return;
+  if (!err) {
+    box.innerHTML = "";
+    return;
+  }
+  box.innerHTML = `
+    <div class="banner">
+      <div style="flex:1">
+        <strong>Unable to load telemetry data</strong>
+        ${esc(err.message || "Request failed")}. Check server connectivity or try again.
+      </div>
+      <button type="button" class="btn-primary" id="retryPollBtn">Retry now</button>
+    </div>`;
+  const retryBtn = $("#retryPollBtn", box);
+  if (retryBtn && activePollTrigger) {
+    retryBtn.addEventListener("click", () => activePollTrigger());
+  }
 }
 
 function setStatus(ok, customText) {
@@ -189,6 +328,7 @@ function poll(fn, intervalMs) {
       await fn();
       if (runId === currentRunId) {
         if (manual && activeTimePicker) activeTimePicker.commitPendingRange();
+        renderPageError(null);
         setStatus(true);
       }
     } catch (err) {
@@ -199,7 +339,10 @@ function poll(fn, intervalMs) {
         return;
       }
       console.error(err);
-      if (runId === currentRunId) setStatus(false);
+      if (runId === currentRunId) {
+        renderPageError(err);
+        setStatus(false);
+      }
     } finally {
       if (runId === currentRunId) {
         running = false;
@@ -209,16 +352,15 @@ function poll(fn, intervalMs) {
     }
   }
 
+  activePollTrigger = () => execute({ manual: true });
   execute({ manual: false });
   setInterval(() => execute({ manual: false }), intervalMs);
   document.addEventListener(
     "visibilitychange",
     () => !document.hidden && execute({ manual: false }),
   );
-  return () => execute({ manual: true });
+  return activePollTrigger;
 }
-
-const charts = {};
 
 function upsertChart(id, config) {
   if (charts[id]) {
@@ -229,13 +371,27 @@ function upsertChart(id, config) {
   }
 }
 
-function pieConfig(labels, data, colors) {
-  const total = data.reduce((a, b) => a + b, 0);
+function pieConfig(labels, data, colors, { legendStats = true } = {}) {
+  const total = data.reduce((a, b) => a + Number(b), 0);
+  const tokens = getThemeChartTokens();
+  const displayLabels = legendStats
+    ? labels.map(
+        (l, i) =>
+          `${l}: ${Number(data[i]).toLocaleString()} (${pct(data[i], total)}%)`,
+      )
+    : labels;
   return {
     type: "doughnut",
     data: {
-      labels,
-      datasets: [{ data, backgroundColor: colors, borderWidth: 2 }],
+      labels: displayLabels,
+      datasets: [
+        {
+          data,
+          backgroundColor: colors,
+          borderColor: tokens.surfaceColor,
+          borderWidth: 2,
+        },
+      ],
     },
     options: {
       responsive: true,
@@ -245,7 +401,14 @@ function pieConfig(labels, data, colors) {
         legend: { position: "right" },
         tooltip: {
           callbacks: {
-            label: (c) => `${c.label}: ${c.parsed} (${pct(c.parsed, total)}%)`,
+            label: (c) => {
+              if (legendStats) return c.label;
+              const dsTotal = c.dataset.data.reduce(
+                (a, b) => a + Number(b),
+                0,
+              );
+              return `${c.label}: ${Number(c.parsed).toLocaleString()} (${pct(c.parsed, dsTotal)}%)`;
+            },
           },
         },
       },
@@ -319,6 +482,7 @@ const NICE_TIME_STEPS = [
 ];
 
 function lineConfig(labels, datasets, extra = {}, gapMs) {
+  const tokens = getThemeChartTokens();
   return {
     type: "line",
     data: {
@@ -345,7 +509,7 @@ function lineConfig(labels, datasets, extra = {}, gapMs) {
         line: { tension: 0.25, borderWidth: 2 },
       },
       scales: {
-        y: { beginAtZero: true, grid: { color: "#eef2f7" } },
+        y: { beginAtZero: true, grid: { color: tokens.gridColor } },
         x: {
           type: "linear",
           grid: { display: false },
@@ -395,8 +559,8 @@ function lineConfig(labels, datasets, extra = {}, gapMs) {
   };
 }
 
-const kpi = (label, value, hint = "") =>
-  `<div class="card kpi"><h3>${esc(label)}</h3><div class="value">${value}</div><div class="hint">${hint}</div></div>`;
+const kpi = (label, value, hint = "", tone = "primary") =>
+  `<div class="card kpi" data-tone="${esc(tone)}"><h3>${esc(label)}</h3><div class="value">${value}</div><div class="hint">${hint}</div></div>`;
 
 const deviceName = (d) => esc(d.device_name || d.device_id);
 const detailHref = (id, name) =>
@@ -487,7 +651,7 @@ function delayTrendConfig(timeline) {
       {
         label: "Average",
         data: timeline.map((t) => Number(t.avg_delay)),
-        borderColor: "#2563eb",
+        borderColor: "#1d4ed8",
       },
       {
         label: "Maximum",
@@ -499,6 +663,7 @@ function delayTrendConfig(timeline) {
 }
 
 function createTableController({
+  root = document,
   state,
   pageSize = 50,
   prepareItems,
@@ -508,6 +673,9 @@ function createTableController({
   emptyMessage,
   onAfterRender,
 }) {
+  const scope = typeof root === "string" ? $(root) : root;
+  const find = (sel) => $(sel, scope);
+
   function getFilteredAndSorted() {
     const list = prepareItems(state);
     const { sort, dir } = state;
@@ -521,38 +689,60 @@ function createTableController({
   }
 
   function render() {
+    const size = state.pageSize || pageSize;
     const list = getFilteredAndSorted();
-    const pages = Math.max(1, Math.ceil(list.length / pageSize));
+    const pages = Math.max(1, Math.ceil(list.length / size));
     state.page = Math.min(state.page, pages - 1);
-    const slice = list.slice(
-      state.page * pageSize,
-      (state.page + 1) * pageSize,
-    );
+    const slice = list.slice(state.page * size, (state.page + 1) * size);
 
-    $("#rows").innerHTML =
-      slice.map(renderRow).join("") ||
-      `<tr><td class="empty" colspan="${colSpan}">${esc(emptyMessage)}</td></tr>`;
+    const rowsEl = find(".rows") || find("#rows");
+    const countEl = find(".count") || find("#count");
+    const pageInfoEl = find(".pageInfo") || find("#pageInfo");
+    const prevEl = find(".prev") || find("#prev");
+    const nextEl = find(".next") || find("#next");
 
-    $("#count").textContent =
-      `${list.length.toLocaleString()} of ${state.all.length.toLocaleString()} devices`;
-    $("#pageInfo").textContent = `Page ${state.page + 1} of ${pages}`;
-    $("#prev").disabled = state.page === 0;
-    $("#next").disabled = state.page >= pages - 1;
+    if (rowsEl) {
+      rowsEl.innerHTML =
+        slice.map(renderRow).join("") ||
+        `<tr><td class="empty" colspan="${colSpan}">${esc(emptyMessage)}</td></tr>`;
+    }
+    if (countEl) {
+      countEl.textContent = `${list.length.toLocaleString()} of ${state.all.length.toLocaleString()} devices`;
+    }
+    if (pageInfoEl) {
+      pageInfoEl.textContent = `Page ${state.page + 1} of ${pages}`;
+    }
+    if (prevEl) prevEl.disabled = state.page === 0;
+    if (nextEl) nextEl.disabled = state.page >= pages - 1;
 
-    document.querySelectorAll("th.sortable").forEach((th) => {
-      th.querySelector(".si").textContent =
-        th.dataset.sort === state.sort
+    scope.querySelectorAll("th.sortable").forEach((th) => {
+      const isSorted = th.dataset.sort === state.sort;
+      th.setAttribute(
+        "aria-sort",
+        isSorted ? (state.dir === "asc" ? "ascending" : "descending") : "none",
+      );
+      const indicator = th.querySelector(".si");
+      if (indicator) {
+        indicator.setAttribute("aria-hidden", "true");
+        indicator.textContent = isSorted
           ? state.dir === "asc"
             ? "▲"
             : "▼"
           : "";
+      }
     });
 
     if (onAfterRender) onAfterRender(list);
   }
 
+  function toggleSort(col) {
+    state.dir = state.sort === col && state.dir === "asc" ? "desc" : "asc";
+    state.sort = col;
+    render();
+  }
+
   function bindControls() {
-    const qEl = $("#q");
+    const qEl = find(".q") || find("#q");
     if (qEl) {
       qEl.addEventListener("input", (e) => {
         state.q = e.target.value;
@@ -560,23 +750,38 @@ function createTableController({
         render();
       });
     }
-    $("#prev").addEventListener("click", () => {
-      state.page--;
-      render();
-    });
-    $("#next").addEventListener("click", () => {
-      state.page++;
-      render();
-    });
-    document.querySelectorAll("th.sortable").forEach((th) =>
-      th.addEventListener("click", () => {
-        const col = th.dataset.sort;
-        state.dir =
-          state.sort === col && state.dir === "asc" ? "desc" : "asc";
-        state.sort = col;
+    const pageSizeEl = find(".pageSize") || find("#pageSize");
+    if (pageSizeEl) {
+      pageSizeEl.addEventListener("change", (e) => {
+        state.pageSize = Number(e.target.value) || pageSize;
+        state.page = 0;
         render();
-      }),
-    );
+      });
+    }
+    const prevEl = find(".prev") || find("#prev");
+    if (prevEl) {
+      prevEl.addEventListener("click", () => {
+        state.page--;
+        render();
+      });
+    }
+    const nextEl = find(".next") || find("#next");
+    if (nextEl) {
+      nextEl.addEventListener("click", () => {
+        state.page++;
+        render();
+      });
+    }
+    scope.querySelectorAll("th.sortable").forEach((th) => {
+      th.setAttribute("tabindex", "0");
+      th.addEventListener("click", () => toggleSort(th.dataset.sort));
+      th.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          toggleSort(th.dataset.sort);
+        }
+      });
+    });
   }
 
   return { render, getFilteredAndSorted, bindControls };
@@ -699,53 +904,54 @@ function createTimeRangePicker(
   root.className = "trp";
   root.innerHTML = `
     <div class="trp-bar">
-      <button type="button" class="trp-prev" title="Shift time range backward">«</button>
-      <button type="button" class="trp-toggle" title="Select time range">
-        <span class="trp-clock">🕒</span>
+      <button type="button" class="trp-prev" title="Shift time range backward" aria-label="Shift time range backward">«</button>
+      <button type="button" class="trp-toggle" title="Select time range" aria-expanded="false" aria-haspopup="dialog">
+        ${ICONS.clock}
         <span class="trp-spinner" aria-hidden="true"></span>
         <span class="trp-label"></span>
-        <span class="trp-caret">▾</span>
+        <span class="trp-caret" aria-hidden="true">▾</span>
       </button>
-      <button type="button" class="trp-next" title="Shift time range forward">»</button>
+      <button type="button" class="trp-next" title="Shift time range forward" aria-label="Shift time range forward">»</button>
     </div>
     <button type="button" class="trp-cancel" title="Cancel active query">✕ Cancel</button>
-    <div class="trp-popover ${align === "right" ? "right-align" : ""}">
+    <div class="trp-popover ${align === "right" ? "right-align" : ""}" role="dialog" aria-label="Time range selector">
       <div class="trp-abs">
         <div class="trp-title">Absolute time range</div>
         <div class="trp-field">
-          <label>From</label>
+          <label for="trpFromInput">From</label>
           <div class="trp-input-group">
-            <input type="text" class="trp-from" spellcheck="false" />
-            <span class="trp-cal-btn" title="Pick date and time">
-              📅
-              <input type="datetime-local" step="1" class="trp-cal-native trp-cal-from" />
+            <input id="trpFromInput" type="text" class="trp-from" spellcheck="false" />
+            <span class="trp-cal-btn" title="Pick start date and time">
+              ${ICONS.calendar}
+              <input type="datetime-local" step="1" class="trp-cal-native trp-cal-from" aria-label="Pick start date and time" />
             </span>
           </div>
         </div>
         <div class="trp-field">
-          <label>To</label>
+          <label for="trpToInput">To</label>
           <div class="trp-input-group">
-            <input type="text" class="trp-to" spellcheck="false" />
-            <span class="trp-cal-btn" title="Pick date and time">
-              📅
-              <input type="datetime-local" step="1" class="trp-cal-native trp-cal-to" />
+            <input id="trpToInput" type="text" class="trp-to" spellcheck="false" />
+            <span class="trp-cal-btn" title="Pick end date and time">
+              ${ICONS.calendar}
+              <input type="datetime-local" step="1" class="trp-cal-native trp-cal-to" aria-label="Pick end date and time" />
             </span>
           </div>
         </div>
-        <div class="trp-err"></div>
+        <div class="trp-err" role="alert"></div>
         <div class="trp-actions">
-          <button type="button" class="trp-icon-btn trp-copy" title="Copy time range">📋</button>
-          <button type="button" class="trp-icon-btn trp-paste" title="Paste time range">📥</button>
+          <button type="button" class="trp-icon-btn trp-copy" title="Copy time range" aria-label="Copy time range">${ICONS.copy}</button>
+          <button type="button" class="trp-icon-btn trp-paste" title="Paste time range" aria-label="Paste time range">${ICONS.paste}</button>
           <button type="button" class="trp-apply-btn">Apply time range</button>
         </div>
         <div class="trp-recent">
-          <div class="trp-title" style="font-size:12px">Recently used absolute ranges</div>
+          <div class="trp-title" style="font-size:0.75rem">Recently used absolute ranges</div>
           <div class="trp-recent-list"></div>
         </div>
       </div>
       <div class="trp-quick">
         <div class="trp-search-wrap">
-          <input type="search" class="trp-search" placeholder="Search quick ranges" />
+          <label for="trpQuickSearch" class="sr-only">Search quick ranges</label>
+          <input id="trpQuickSearch" type="search" class="trp-search" placeholder="Search quick ranges…" />
         </div>
         <div class="trp-quick-list"></div>
       </div>
@@ -823,7 +1029,8 @@ function createTimeRangePicker(
           (r) =>
             `<button type="button" class="trp-recent-item" data-from="${esc(r.from)}" data-to="${esc(r.to)}">${esc(r.from)} to ${esc(r.to)}</button>`,
         )
-        .join("") || `<div class="hint" style="font-size:11px;color:var(--muted)">No recent ranges</div>`;
+        .join("") ||
+      `<div class="hint" style="font-size:0.74rem;color:var(--muted)">No recent custom ranges saved</div>`;
   }
 
   function syncUI() {
@@ -840,6 +1047,7 @@ function createTimeRangePicker(
 
   function closePopover() {
     popover.classList.remove("open");
+    toggleBtn.setAttribute("aria-expanded", "false");
     caretEl.textContent = "▾";
   }
 
@@ -921,6 +1129,7 @@ function createTimeRangePicker(
     if (willOpen) {
       syncUI();
       popover.classList.add("open");
+      toggleBtn.setAttribute("aria-expanded", "true");
       caretEl.textContent = "▴";
     } else {
       closePopover();
@@ -1008,11 +1217,27 @@ function createTimeRangePicker(
   return controller;
 }
 
+if (typeof MutationObserver !== "undefined") {
+  const shellObserver = new MutationObserver(() => {
+    const mainEl = $("main.content");
+    if (mainEl && mainEl.nextElementSibling) {
+      shellObserver.disconnect();
+      buildShell();
+    }
+  });
+  shellObserver.observe(document.documentElement, {
+    childList: true,
+    subtree: true,
+  });
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   buildShell();
   if (window.Chart) {
-    Chart.defaults.font.family = "Inter, system-ui, sans-serif";
-    Chart.defaults.color = "#667085";
+    const tokens = getThemeChartTokens();
+    Chart.defaults.font.family =
+      '"Plus Jakarta Sans", system-ui, -apple-system, sans-serif';
+    Chart.defaults.color = tokens.textColor;
   }
   document.dispatchEvent(new Event("shell-ready"));
   startHealthLoop();
