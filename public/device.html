@@ -162,9 +162,10 @@
 
           const last = history[history.length - 1];
           const total = Number(stats.total_count);
-          const over1m =
-            (stats.categories.find((c) => c.category === ">1m") || {}).count ||
-            0;
+          const worstCat = DELAY_CATEGORIES[DELAY_CATEGORIES.length - 1];
+          const worstCount =
+            (stats.categories.find((c) => c.category === worstCat.key) || {})
+              .count || 0;
 
           $("#kpis").innerHTML =
             kpi(
@@ -194,7 +195,7 @@
             kpi(
               "Total events",
               total.toLocaleString(),
-              `${pct(over1m, total)}% over 1 minute`,
+              `${pct(worstCount, total)}% in ${worstCat.key}`,
               "primary",
             );
 

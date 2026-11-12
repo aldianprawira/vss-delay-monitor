@@ -119,29 +119,41 @@
             DELAY_CATEGORIES.map((c) => [c.key, 0]),
           );
 
+          const onlineKey = STALENESS_CATEGORIES[0]?.key || "ONLINE";
+          const offlineKey =
+            STALENESS_CATEGORIES[STALENESS_CATEGORIES.length - 1]?.key ||
+            "OFFLINE";
+          const healthyDelayKey = DELAY_CATEGORIES[0]?.key || "0-5s";
+          const delayThresholdLabel = formatAxisDelay(
+            DELAY_CATEGORIES[0]?.max || 5000,
+          );
+
           const enriched = devices.map((d) => {
             const age = now - new Date(d.last_received).getTime();
             const staleCat = getStalenessCategory(age);
             const delayCat = getCategory(d.delay_ms);
             staleCounts[staleCat.key]++;
-            if (staleCat.key === "ONLINE") {
+            if (staleCat.key === onlineKey) {
               onlineDelayCounts[delayCat.key]++;
             }
             return { ...d, age, staleCat, delayCat };
           });
 
           const totalDevices = devices.length;
-          const onlineCount = staleCounts.ONLINE;
-          const offlineCount = staleCounts.OFFLINE;
-          const onlineDelayedOver5s = DELAY_CATEGORIES.filter(
-            (c) => c.key !== "0-5s",
-          ).reduce((sum, c) => sum + onlineDelayCounts[c.key], 0);
+          const onlineCount = staleCounts[onlineKey] || 0;
+          const offlineCount = staleCounts[offlineKey] || 0;
+          const warningCount = STALENESS_CATEGORIES.filter(
+            (c) => c.key !== onlineKey && c.key !== offlineKey,
+          ).reduce((sum, c) => sum + (staleCounts[c.key] || 0), 0);
+          const onlineDelayedCount = DELAY_CATEGORIES.filter(
+            (c) => c.key !== healthyDelayKey,
+          ).reduce((sum, c) => sum + (onlineDelayCounts[c.key] || 0), 0);
 
           $("#kpis").innerHTML =
             kpi(
               "Total devices",
               totalDevices.toLocaleString(),
-              `${onlineCount.toLocaleString()} online · ${staleCounts.WARNING.toLocaleString()} warning`,
+              `${onlineCount.toLocaleString()} online · ${warningCount.toLocaleString()} warning`,
               "primary",
             ) +
             kpi(
@@ -151,10 +163,10 @@
               offlineCount > 0 ? "err" : "ok",
             ) +
             kpi(
-              "Total devices delay > 5s",
-              onlineDelayedOver5s.toLocaleString(),
-              `${pct(onlineDelayedOver5s, onlineCount)}% of ${onlineCount.toLocaleString()} online devices`,
-              onlineDelayedOver5s > 0 ? "warn" : "ok",
+              `Total devices delay > ${delayThresholdLabel}`,
+              onlineDelayedCount.toLocaleString(),
+              `${pct(onlineDelayedCount, onlineCount)}% of ${onlineCount.toLocaleString()} online devices`,
+              onlineDelayedCount > 0 ? "warn" : "ok",
             );
 
           upsertChart(

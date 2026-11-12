@@ -440,12 +440,6 @@ function categoryPieConfig(categories) {
   );
 }
 
-function countDelayedDevices(categories) {
-  return categories
-    .filter((c) => c.category !== "0-5s")
-    .reduce((sum, c) => sum + Number(c.count), 0);
-}
-
 const TIME_OPTS = { hour: "2-digit", minute: "2-digit", hourCycle: "h23" };
 
 function fmtTick(ms, multiDay) {
@@ -576,7 +570,6 @@ function lineConfig(labels, datasets, extra = {}, gapMs) {
 const kpi = (label, value, hint = "", tone = "primary") =>
   `<div class="card kpi" data-tone="${esc(tone)}"><h3>${esc(label)}</h3><div class="value">${value}</div><div class="hint">${hint}</div></div>`;
 
-const deviceName = (d) => esc(d.device_name || d.device_id);
 const detailHref = (id, name) =>
   `/device.html?id=${encodeURIComponent(id)}&name=${encodeURIComponent(name || "")}`;
 
@@ -658,22 +651,86 @@ function delayLineConfig(labels, datasets, gapMs) {
   return cfg;
 }
 
-function delayTrendConfig(timeline) {
-  return delayLineConfig(
-    timeline.map((t) => new Date(t.bucket).getTime()),
-    [
-      {
-        label: "Average",
-        data: timeline.map((t) => Number(t.avg_delay)),
-        borderColor: "#1d4ed8",
-      },
-      {
-        label: "Maximum",
-        data: timeline.map((t) => Number(t.max_delay)),
-        borderColor: "#dc2626",
-      },
-    ],
-  );
+function exportToXlsx({ rows, headers, colWidths, sheetName, filename }) {
+  if (!window.XLSX) {
+    alert(
+      "Failed to load Excel library. Please check your internet connection and reload the page.",
+    );
+    return;
+  }
+  const ws = XLSX.utils.json_to_sheet(rows, { header: headers });
+  ws["!cols"] = colWidths.map((wch) => ({ wch }));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, sheetName);
+  XLSX.writeFile(wb, filename);
+}
+
+function bindPeriodSummaryLoader({
+  inputEl,
+  cancelBtn,
+  errEl,
+  errorTitle,
+  errorHint,
+  fetchUrl,
+  getCommittedValue,
+  onSuccess,
+  onReset,
+}) {
+  let activeController = null;
+  let committedValue = inputEl.value;
+
+  async function load() {
+    if (activeController) activeController.abort();
+    const controller = new AbortController();
+    activeController = controller;
+
+    errEl.style.display = "none";
+    inputEl.disabled = true;
+    cancelBtn.style.display = "inline-flex";
+
+    try {
+      const data = await api(fetchUrl(inputEl.value), {
+        signal: controller.signal,
+      });
+      if (activeController !== controller) return;
+
+      committedValue = getCommittedValue
+        ? getCommittedValue(data)
+        : inputEl.value;
+      onSuccess(data);
+      setStatus(true);
+    } catch (e) {
+      if (controller.signal.aborted || e?.name === "AbortError") {
+        if (activeController === controller) {
+          setStatus(true, "Query cancelled");
+        }
+        return;
+      }
+      onReset();
+      errEl.innerHTML = `<div style="flex:1"><strong>${esc(errorTitle)}</strong>${esc(e.message)}. ${esc(errorHint)}</div><button type="button" class="btn-primary" data-retry>Retry now</button>`;
+      errEl.style.display = "flex";
+      const retryBtn = $("[data-retry]", errEl);
+      if (retryBtn) retryBtn.addEventListener("click", () => load());
+      setStatus(false);
+    } finally {
+      if (activeController === controller) {
+        activeController = null;
+        inputEl.disabled = false;
+        cancelBtn.style.display = "none";
+      }
+    }
+  }
+
+  cancelBtn.addEventListener("click", () => {
+    if (activeController) {
+      inputEl.value = committedValue;
+      activeController.abort();
+    }
+  });
+
+  inputEl.addEventListener("change", () => load());
+  load();
+  return { load };
 }
 
 function createTableController({

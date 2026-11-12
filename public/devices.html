@@ -172,34 +172,19 @@
         }
 
         function exportXlsx() {
-          if (!window.XLSX) {
-            alert(
-              "Failed to load Excel library. Please check your internet connection and reload the page.",
-            );
-            return;
-          }
-          const rows = table.getFilteredAndSorted().map((d) => ({
-            Device: d.device_name || "-",
-            "Device ID": String(d.device_id),
-            Delay: `${formatDelay(d.delay_ms)} (${d.delayCat.key})`,
-            "Last Seen": `${formatStaleness(d.age)} (${d.staleCat.key})`,
-            "Last DTU": new Date(d.last_dtu).toLocaleString(),
-          }));
-
-          const ws = XLSX.utils.json_to_sheet(rows, {
-            header: ["Device", "Device ID", "Delay", "Last Seen", "Last DTU"],
+          exportToXlsx({
+            rows: table.getFilteredAndSorted().map((d) => ({
+              Device: d.device_name || "-",
+              "Device ID": String(d.device_id),
+              Delay: `${formatDelay(d.delay_ms)} (${d.delayCat.key})`,
+              "Last Seen": `${formatStaleness(d.age)} (${d.staleCat.key})`,
+              "Last DTU": new Date(d.last_dtu).toLocaleString(),
+            })),
+            headers: ["Device", "Device ID", "Delay", "Last Seen", "Last DTU"],
+            colWidths: [28, 24, 20, 24, 22],
+            sheetName: "Live Monitoring",
+            filename: buildExportFilename(),
           });
-          ws["!cols"] = [
-            { wch: 28 },
-            { wch: 24 },
-            { wch: 20 },
-            { wch: 24 },
-            { wch: 22 },
-          ];
-
-          const wb = XLSX.utils.book_new();
-          XLSX.utils.book_append_sheet(wb, ws, "Live Monitoring");
-          XLSX.writeFile(wb, buildExportFilename());
         }
 
         DELAY_CATEGORIES.forEach((c) =>

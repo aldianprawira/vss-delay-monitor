@@ -306,6 +306,10 @@
           },
         });
 
+        const delayThresholdLabel = formatAxisDelay(
+          DELAY_CATEGORIES[0]?.max || 5000,
+        );
+
         function renderKpis() {
           const t = monthlyState.totals;
           const covEl = $("#coveragePill");
@@ -333,7 +337,7 @@
               t.avgDailyOffline > 0 ? "err" : "ok",
             ) +
             kpi(
-              "Avg daily devices delay > 5s",
+              `Avg daily devices delay > ${delayThresholdLabel}`,
               t.avgDailyDelayOver5s.toLocaleString(),
               peakDelayHint,
               t.avgDailyDelayOver5s > 0 ? "warn" : "ok",
@@ -406,111 +410,64 @@
         function renderCharts() {
           const labels = monthlyState.days.map((d) => d.dayLabel);
 
-          const colorOffline =
-            (STALENESS_CATEGORIES.find((c) => c.key === "OFFLINE") || {})
-              .color || "#dc2626";
-          const colorWarning =
-            (STALENESS_CATEGORIES.find((c) => c.key === "WARNING") || {})
-              .color || "#d97706";
-          const colorOnline =
-            (STALENESS_CATEGORIES.find((c) => c.key === "ONLINE") || {})
-              .color || "#059669";
+          const staleDatasets = [...STALENESS_CATEGORIES].reverse().map((c) => ({
+            label: c.key,
+            data: monthlyState.days.map(
+              (d) => d.stalenessByCat?.[c.key] ?? 0,
+            ),
+            backgroundColor: c.color,
+            borderRadius: 2,
+          }));
 
           upsertChart(
             "staleBar",
-            stackedBarConfig(
-              labels,
-              [
-                {
-                  label: "OFFLINE",
-                  data: monthlyState.days.map((d) => d.offline),
-                  backgroundColor: colorOffline,
-                  borderRadius: 2,
-                },
-                {
-                  label: "WARNING",
-                  data: monthlyState.days.map((d) => d.warning),
-                  backgroundColor: colorWarning,
-                  borderRadius: 2,
-                },
-                {
-                  label: "ONLINE",
-                  data: monthlyState.days.map((d) => d.online),
-                  backgroundColor: colorOnline,
-                  borderRadius: 2,
-                },
-              ],
-              (items) => {
-                const day = monthlyState.days[items[0]?.dataIndex];
-                if (!day || !day.captured) return "";
-                const sum = items.reduce(
-                  (acc, it) => acc + Number(it.parsed.y || 0),
-                  0,
-                );
-                return `Total shown: ${sum.toLocaleString()} devices`;
-              },
-            ),
+            stackedBarConfig(labels, staleDatasets, (items) => {
+              const day = monthlyState.days[items[0]?.dataIndex];
+              if (!day || !day.captured) return "";
+              const sum = items.reduce(
+                (acc, it) => acc + Number(it.parsed.y || 0),
+                0,
+              );
+              return `Total shown: ${sum.toLocaleString()} devices`;
+            }),
           );
 
-          const colorOver1m =
-            (DELAY_CATEGORIES.find((c) => c.key === ">1m") || {}).color ||
-            "#dc2626";
-          const color5sto1m =
-            (DELAY_CATEGORIES.find((c) => c.key === "5s-1m") || {}).color ||
-            "#d97706";
+          const delayedCategories = [...DELAY_CATEGORIES.slice(1)].reverse();
+          const delayDatasets = delayedCategories.map((c) => ({
+            label: c.key,
+            data: monthlyState.days.map((d) => d.delayByCat?.[c.key] ?? 0),
+            backgroundColor: c.color,
+            borderRadius: 2,
+          }));
 
           upsertChart(
             "delayBar",
-            stackedBarConfig(
-              labels,
-              [
-                {
-                  label: ">1m",
-                  data: monthlyState.days.map((d) => d.delayOver1m),
-                  backgroundColor: colorOver1m,
-                  borderRadius: 2,
-                },
-                {
-                  label: "5s-1m",
-                  data: monthlyState.days.map((d) => d.delay5sto1m),
-                  backgroundColor: color5sto1m,
-                  borderRadius: 2,
-                },
-              ],
-              (items) => {
-                const day = monthlyState.days[items[0]?.dataIndex];
-                if (!day || !day.captured) return "";
-                const sum = items.reduce(
-                  (acc, it) => acc + Number(it.parsed.y || 0),
-                  0,
-                );
-                return `Total avg delay > 5s: ${sum.toLocaleString()} devices`;
-              },
-            ),
+            stackedBarConfig(labels, delayDatasets, (items) => {
+              const day = monthlyState.days[items[0]?.dataIndex];
+              if (!day || !day.captured) return "";
+              const sum = items.reduce(
+                (acc, it) => acc + Number(it.parsed.y || 0),
+                0,
+              );
+              return `Total avg delay > ${delayThresholdLabel}: ${sum.toLocaleString()} devices`;
+            }),
           );
         }
 
         function exportOfflineXlsx() {
-          if (!window.XLSX) {
-            alert(
-              "Failed to load Excel library. Please check your internet connection and reload the page.",
-            );
-            return;
-          }
           const cap = monthlyState.totals?.capturedDays || 1;
-          const rows = offlineTable.getFilteredAndSorted().map((d) => ({
-            Device: d.deviceName || "-",
-            "Device ID": String(d.deviceId),
-            "Days Offline": d.daysOffline,
-            "Captured Days": cap,
-            "Offline Rate (%)": Number(pct(d.daysOffline, cap)),
-            "Max Silent Duration": formatStaleness(d.maxAgeMs),
-            "First Offline Date": d.firstOfflineDate,
-            "Last Offline Date": d.lastOfflineDate,
-          }));
-
-          const ws = XLSX.utils.json_to_sheet(rows, {
-            header: [
+          exportToXlsx({
+            rows: offlineTable.getFilteredAndSorted().map((d) => ({
+              Device: d.deviceName || "-",
+              "Device ID": String(d.deviceId),
+              "Days Offline": d.daysOffline,
+              "Captured Days": cap,
+              "Offline Rate (%)": Number(pct(d.daysOffline, cap)),
+              "Max Silent Duration": formatStaleness(d.maxAgeMs),
+              "First Offline Date": d.firstOfflineDate,
+              "Last Offline Date": d.lastOfflineDate,
+            })),
+            headers: [
               "Device",
               "Device ID",
               "Days Offline",
@@ -520,46 +477,25 @@
               "First Offline Date",
               "Last Offline Date",
             ],
+            colWidths: [28, 24, 14, 14, 16, 20, 18, 18],
+            sheetName: "Monthly Offline Frequency",
+            filename: `monthly-summary-offline-devices_${monthlyState.month || "data"}.xlsx`,
           });
-          ws["!cols"] = [
-            { wch: 28 },
-            { wch: 24 },
-            { wch: 14 },
-            { wch: 14 },
-            { wch: 16 },
-            { wch: 20 },
-            { wch: 18 },
-            { wch: 18 },
-          ];
-
-          const wb = XLSX.utils.book_new();
-          XLSX.utils.book_append_sheet(wb, ws, "Monthly Offline Frequency");
-          XLSX.writeFile(
-            wb,
-            `monthly-summary-offline-devices_${monthlyState.month || "data"}.xlsx`,
-          );
         }
 
         function exportDelayXlsx() {
-          if (!window.XLSX) {
-            alert(
-              "Failed to load Excel library. Please check your internet connection and reload the page.",
-            );
-            return;
-          }
-          const rows = delayTable.getFilteredAndSorted().map((d) => ({
-            Device: d.deviceName || "-",
-            "Device ID": String(d.deviceId),
-            "Active Days": d.activeDays,
-            "Days Avg > 5s": d.daysOver5s,
-            Records: d.count,
-            Min: formatDelay(d.minDelay),
-            Avg: `${formatDelay(d.avgDelay)} (${getCategory(d.avgDelay).key})`,
-            Max: `${formatDelay(d.maxDelay)} (${getCategory(d.maxDelay).key})`,
-          }));
-
-          const ws = XLSX.utils.json_to_sheet(rows, {
-            header: [
+          exportToXlsx({
+            rows: delayTable.getFilteredAndSorted().map((d) => ({
+              Device: d.deviceName || "-",
+              "Device ID": String(d.deviceId),
+              "Active Days": d.activeDays,
+              "Days Avg > 5s": d.daysOver5s,
+              Records: d.count,
+              Min: formatDelay(d.minDelay),
+              Avg: `${formatDelay(d.avgDelay)} (${getCategory(d.avgDelay).key})`,
+              Max: `${formatDelay(d.maxDelay)} (${getCategory(d.maxDelay).key})`,
+            })),
+            headers: [
               "Device",
               "Device ID",
               "Active Days",
@@ -569,24 +505,10 @@
               "Avg",
               "Max",
             ],
+            colWidths: [28, 24, 14, 16, 14, 14, 18, 18],
+            sheetName: "Monthly Delay Summary",
+            filename: `monthly-summary-delay_${monthlyState.month || "data"}.xlsx`,
           });
-          ws["!cols"] = [
-            { wch: 28 },
-            { wch: 24 },
-            { wch: 14 },
-            { wch: 16 },
-            { wch: 14 },
-            { wch: 14 },
-            { wch: 18 },
-            { wch: 18 },
-          ];
-
-          const wb = XLSX.utils.book_new();
-          XLSX.utils.book_append_sheet(wb, ws, "Monthly Delay Summary");
-          XLSX.writeFile(
-            wb,
-            `monthly-summary-delay_${monthlyState.month || "data"}.xlsx`,
-          );
         }
 
         const pickerSlot = $("#timePicker");
@@ -610,38 +532,23 @@
         $("#exportOffline").addEventListener("click", exportOfflineXlsx);
         $("#exportDelay").addEventListener("click", exportDelayXlsx);
 
-        let activeController = null;
-        let previousMonth = monthEl.value;
+        function renderAll() {
+          renderKpis();
+          renderCharts();
+          offlineTable.render();
+          delayTable.render();
+        }
 
-        cancelBtn.addEventListener("click", () => {
-          if (activeController) {
-            monthEl.value = previousMonth;
-            activeController.abort();
-          }
-        });
-
-        monthEl.addEventListener("change", () => load());
-
-        load();
-
-        async function load() {
-          if (activeController) activeController.abort();
-          const controller = new AbortController();
-          activeController = controller;
-
-          const err = $("#err");
-          err.style.display = "none";
-          monthEl.disabled = true;
-          cancelBtn.style.display = "inline-flex";
-
-          try {
-            const data = await api(
-              `/api/monthly-summary?month=${encodeURIComponent(monthEl.value)}`,
-              { signal: controller.signal },
-            );
-            if (activeController !== controller) return;
-
-            previousMonth = data.month;
+        bindPeriodSummaryLoader({
+          inputEl: monthEl,
+          cancelBtn,
+          errEl: $("#err"),
+          errorTitle: "Failed to load monthly summary",
+          errorHint: "Select another month or try again.",
+          fetchUrl: (val) =>
+            `/api/monthly-summary?month=${encodeURIComponent(val)}`,
+          getCommittedValue: (data) => data.month,
+          onSuccess(data) {
             monthlyState.month = data.month;
             monthlyState.totals = data.totals;
             monthlyState.days = data.days || [];
@@ -649,40 +556,16 @@
             offlineState.page = 0;
             delayState.all = data.delayDevices || [];
             delayState.page = 0;
-
-            renderKpis();
-            renderCharts();
-            offlineTable.render();
-            delayTable.render();
-            setStatus(true);
-          } catch (e) {
-            if (controller.signal.aborted || e?.name === "AbortError") {
-              if (activeController === controller) {
-                setStatus(true, "Query cancelled");
-              }
-              return;
-            }
+            renderAll();
+          },
+          onReset() {
             monthlyState.totals = null;
             monthlyState.days = [];
             offlineState.all = [];
             delayState.all = [];
-            err.innerHTML = `<div style="flex:1"><strong>Failed to load monthly summary</strong>${esc(e.message)}. Select another month or try again.</div><button type="button" class="btn-primary" id="retryMonthlyBtn">Retry now</button>`;
-            err.style.display = "flex";
-            const retryBtn = $("#retryMonthlyBtn", err);
-            if (retryBtn) retryBtn.addEventListener("click", () => load());
-            renderKpis();
-            renderCharts();
-            offlineTable.render();
-            delayTable.render();
-            setStatus(false);
-          } finally {
-            if (activeController === controller) {
-              activeController = null;
-              monthEl.disabled = false;
-              cancelBtn.style.display = "none";
-            }
-          }
-        }
+            renderAll();
+          },
+        });
       });
     </script>
   </body>

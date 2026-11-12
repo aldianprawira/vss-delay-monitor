@@ -342,23 +342,18 @@
         }
 
         function exportOfflineXlsx() {
-          if (!window.XLSX) {
-            alert(
-              "Failed to load Excel library. Please check your internet connection and reload the page.",
-            );
-            return;
-          }
-          const rows = offlineTable.getFilteredAndSorted().map((d) => ({
-            Device: d.deviceName || "-",
-            "Device ID": String(d.deviceId),
-            "Silent Duration": formatStaleness(d.ageMs),
-            "Last Seen": new Date(d.lastReceived).toLocaleString(),
-            "Last DTU": d.lastDtu ? new Date(d.lastDtu).toLocaleString() : "-",
-            Status: "OFFLINE",
-          }));
-
-          const ws = XLSX.utils.json_to_sheet(rows, {
-            header: [
+          exportToXlsx({
+            rows: offlineTable.getFilteredAndSorted().map((d) => ({
+              Device: d.deviceName || "-",
+              "Device ID": String(d.deviceId),
+              "Silent Duration": formatStaleness(d.ageMs),
+              "Last Seen": new Date(d.lastReceived).toLocaleString(),
+              "Last DTU": d.lastDtu
+                ? new Date(d.lastDtu).toLocaleString()
+                : "-",
+              Status: "OFFLINE",
+            })),
+            headers: [
               "Device",
               "Device ID",
               "Silent Duration",
@@ -366,58 +361,27 @@
               "Last DTU",
               "Status",
             ],
+            colWidths: [28, 24, 18, 22, 22, 12],
+            sheetName: "Offline Devices",
+            filename: `daily-summary-offline-devices_${summaryState.date || "data"}.xlsx`,
           });
-          ws["!cols"] = [
-            { wch: 28 },
-            { wch: 24 },
-            { wch: 18 },
-            { wch: 22 },
-            { wch: 22 },
-            { wch: 12 },
-          ];
-
-          const wb = XLSX.utils.book_new();
-          XLSX.utils.book_append_sheet(wb, ws, "Offline Devices");
-          XLSX.writeFile(
-            wb,
-            `daily-summary-offline-devices_${summaryState.date || "data"}.xlsx`,
-          );
         }
 
         function exportDelayXlsx() {
-          if (!window.XLSX) {
-            alert(
-              "Failed to load Excel library. Please check your internet connection and reload the page.",
-            );
-            return;
-          }
-          const rows = delayTable.getFilteredAndSorted().map((d) => ({
-            Device: d.deviceName || "-",
-            "Device ID": String(d.deviceId),
-            Records: d.count,
-            Min: formatDelay(d.minDelay),
-            Avg: `${formatDelay(d.avgDelay)} (${getCategory(d.avgDelay).key})`,
-            Max: `${formatDelay(d.maxDelay)} (${getCategory(d.maxDelay).key})`,
-          }));
-
-          const ws = XLSX.utils.json_to_sheet(rows, {
-            header: ["Device", "Device ID", "Records", "Min", "Avg", "Max"],
+          exportToXlsx({
+            rows: delayTable.getFilteredAndSorted().map((d) => ({
+              Device: d.deviceName || "-",
+              "Device ID": String(d.deviceId),
+              Records: d.count,
+              Min: formatDelay(d.minDelay),
+              Avg: `${formatDelay(d.avgDelay)} (${getCategory(d.avgDelay).key})`,
+              Max: `${formatDelay(d.maxDelay)} (${getCategory(d.maxDelay).key})`,
+            })),
+            headers: ["Device", "Device ID", "Records", "Min", "Avg", "Max"],
+            colWidths: [28, 24, 12, 14, 18, 18],
+            sheetName: "Delay Summary",
+            filename: `daily-summary-delay_${summaryState.date || "data"}.xlsx`,
           });
-          ws["!cols"] = [
-            { wch: 28 },
-            { wch: 24 },
-            { wch: 12 },
-            { wch: 14 },
-            { wch: 18 },
-            { wch: 18 },
-          ];
-
-          const wb = XLSX.utils.book_new();
-          XLSX.utils.book_append_sheet(wb, ws, "Delay Summary");
-          XLSX.writeFile(
-            wb,
-            `daily-summary-delay_${summaryState.date || "data"}.xlsx`,
-          );
         }
 
         const pickerSlot = $("#timePicker");
@@ -440,38 +404,22 @@
         $("#exportOffline").addEventListener("click", exportOfflineXlsx);
         $("#exportDelay").addEventListener("click", exportDelayXlsx);
 
-        let activeController = null;
-        let previousDate = dateEl.value;
+        function renderAll() {
+          renderKpis();
+          renderCharts();
+          offlineTable.render();
+          delayTable.render();
+        }
 
-        cancelBtn.addEventListener("click", () => {
-          if (activeController) {
-            dateEl.value = previousDate;
-            activeController.abort();
-          }
-        });
-
-        dateEl.addEventListener("change", () => load());
-
-        load();
-
-        async function load() {
-          if (activeController) activeController.abort();
-          const controller = new AbortController();
-          activeController = controller;
-
-          const err = $("#err");
-          err.style.display = "none";
-          dateEl.disabled = true;
-          cancelBtn.style.display = "inline-flex";
-
-          try {
-            const data = await api(
-              `/api/summary?date=${encodeURIComponent(dateEl.value)}`,
-              { signal: controller.signal },
-            );
-            if (activeController !== controller) return;
-
-            previousDate = data.date;
+        bindPeriodSummaryLoader({
+          inputEl: dateEl,
+          cancelBtn,
+          errEl: $("#err"),
+          errorTitle: "Failed to load daily summary",
+          errorHint: "Select another date or try again.",
+          fetchUrl: (val) => `/api/summary?date=${encodeURIComponent(val)}`,
+          getCommittedValue: (data) => data.date,
+          onSuccess(data) {
             summaryState.date = data.date;
             summaryState.totals = data.totals;
             summaryState.stalenessCategories = data.stalenessCategories || [];
@@ -479,40 +427,16 @@
             offlineState.page = 0;
             delayState.all = data.devices || [];
             delayState.page = 0;
-
-            renderKpis();
-            renderCharts();
-            offlineTable.render();
-            delayTable.render();
-            setStatus(true);
-          } catch (e) {
-            if (controller.signal.aborted || e?.name === "AbortError") {
-              if (activeController === controller) {
-                setStatus(true, "Query cancelled");
-              }
-              return;
-            }
+            renderAll();
+          },
+          onReset() {
             summaryState.totals = null;
             summaryState.stalenessCategories = [];
             offlineState.all = [];
             delayState.all = [];
-            err.innerHTML = `<div style="flex:1"><strong>Failed to load daily summary</strong>${esc(e.message)}. Select another date or try again.</div><button type="button" class="btn-primary" id="retrySummaryBtn">Retry now</button>`;
-            err.style.display = "flex";
-            const retryBtn = $("#retrySummaryBtn", err);
-            if (retryBtn) retryBtn.addEventListener("click", () => load());
-            renderKpis();
-            renderCharts();
-            offlineTable.render();
-            delayTable.render();
-            setStatus(false);
-          } finally {
-            if (activeController === controller) {
-              activeController = null;
-              dateEl.disabled = false;
-              cancelBtn.style.display = "none";
-            }
-          }
-        }
+            renderAll();
+          },
+        });
       });
     </script>
   </body>

@@ -19,6 +19,7 @@ const {
   getOrGenerateDailySummary,
   getMonthlySummary,
 } = require("./dailySummary");
+const { DELAY_CATEGORIES } = require("../public/format");
 const {
   ingest,
   trafficCumulative,
@@ -28,7 +29,12 @@ const {
 const router = express.Router();
 
 const asyncHandler = (fn) => (req, res, next) =>
-  Promise.resolve(fn(req, res, next)).catch(next);
+  Promise.resolve(fn(req, res, next)).catch((err) => {
+    if (err?.status === 400) {
+      return res.status(400).json({ error: err.message });
+    }
+    next(err);
+  });
 
 const RANGE_MINUTES = {
   "5m": 5,
@@ -64,15 +70,21 @@ function getTimeWindow(req) {
   return { from, to };
 }
 
-// Keep delay category thresholds synchronized with DELAY_CATEGORIES in public/format.js.
-const CATEGORY_SQL = `
-  CASE
-    WHEN ABS(delay_ms) < 5000 THEN '0-5s'
-    WHEN ABS(delay_ms) < 60000 THEN '5s-1m'
-    ELSE '>1m'
-  END
-`;
-const CATEGORY_ORDER = ["0-5s", "5s-1m", ">1m"];
+// Build SQL CASE branches directly from public/format.js so category changes apply across backend queries automatically.
+function buildCategorySql(columnExpr = "delay_ms") {
+  const escapeSqlLiteral = (str) => String(str).replace(/'/g, "''");
+  const branches = DELAY_CATEGORIES.slice(0, -1).map(
+    (c) =>
+      `WHEN ABS(${columnExpr}) < ${Number(c.max)} THEN '${escapeSqlLiteral(c.key)}'`,
+  );
+  const fallback = escapeSqlLiteral(
+    DELAY_CATEGORIES[DELAY_CATEGORIES.length - 1].key,
+  );
+  return `CASE ${branches.join(" ")} ELSE '${fallback}' END`;
+}
+
+const CATEGORY_SQL = buildCategorySql("delay_ms");
+const CATEGORY_ORDER = DELAY_CATEGORIES.map((c) => c.key);
 
 function fillCategoryCounts(rows) {
   const countsByCategory = Object.fromEntries(
@@ -216,94 +228,6 @@ router.get(
   }),
 );
 
-router.get(
-  "/api/stats/summary",
-  asyncHandler(async (req, res) => {
-    const { from, to } = getTimeWindow(req);
-
-    const [
-      catCurrent,
-      totalDevices,
-      currentWorst,
-      historicalWorst,
-      topOffenders,
-    ] = await Promise.all([
-      apiPool.query(
-        `SELECT ${CATEGORY_SQL} AS category, COUNT(*) AS count
-         FROM device_latest_state
-         GROUP BY category`,
-      ),
-      apiPool.query(`SELECT COUNT(*) AS total FROM device_latest_state`),
-      apiPool.query(
-        `SELECT device_id, device_name, delay_ms
-         FROM device_latest_state
-         ORDER BY delay_ms DESC
-         LIMIT 1`,
-      ),
-      apiPool.query(
-        `SELECT h.device_id, COALESCE(h.device_name, dl.device_name) AS device_name, h.delay_ms
-         FROM device_delay_history h
-         LEFT JOIN device_latest_state dl ON dl.device_id = h.device_id
-         WHERE h.received_at >= $1 AND h.received_at <= $2
-         ORDER BY h.delay_ms DESC
-         LIMIT 1`,
-        [from, to],
-      ),
-      apiPool.query(
-        `SELECT h.device_id,
-                COALESCE(MAX(h.device_name), dl.device_name) AS device_name,
-                MAX(h.delay_ms) AS max_delay
-         FROM device_delay_history h
-         LEFT JOIN device_latest_state dl ON dl.device_id = h.device_id
-         WHERE h.received_at >= $1 AND h.received_at <= $2
-         GROUP BY h.device_id, dl.device_name
-         ORDER BY max_delay DESC
-         LIMIT 5`,
-        [from, to],
-      ),
-    ]);
-
-    res.json({
-      totalDevices: Number(totalDevices.rows[0].total),
-      categories: fillCategoryCounts(catCurrent.rows),
-      currentWorst: currentWorst.rows[0] || null,
-      historicalWorst: historicalWorst.rows[0] || null,
-      topOffenders: topOffenders.rows,
-    });
-  }),
-);
-
-router.get(
-  "/api/stats/top-stale",
-  asyncHandler(async (req, res) => {
-    const { rows } = await apiPool.query(
-      `SELECT device_id, device_name, last_received
-       FROM device_latest_state
-       ORDER BY last_received ASC
-       LIMIT 5`,
-    );
-    res.json(rows);
-  }),
-);
-
-router.get(
-  "/api/stats/timeline",
-  asyncHandler(async (req, res) => {
-    const { from, to } = getTimeWindow(req);
-    const { rows } = await apiPool.query(
-      `SELECT bucket,
-              (sum_delay::float8 / NULLIF(cnt, 0)) AS avg_delay,
-              max_delay
-       FROM delay_rollup_minute
-       WHERE bucket >= date_trunc('minute', $1::timestamptz)
-         AND bucket <= date_trunc('minute', $2::timestamptz)
-       ORDER BY bucket ASC`,
-      [from, to],
-    );
-    res.json(rows);
-  }),
-);
-
 router.get("/api/traffic/live", (req, res) => {
   res.json(trafficCumulative);
 });
@@ -338,17 +262,10 @@ router.get(
         .json({ error: "Invalid date format; expected YYYY-MM-DD." });
     }
 
-    try {
-      const data = await getOrGenerateDailySummary(date, {
-        cancelOnCloseRes: res,
-      });
-      res.json(data);
-    } catch (err) {
-      if (err.status === 400) {
-        return res.status(400).json({ error: err.message });
-      }
-      throw err;
-    }
+    const data = await getOrGenerateDailySummary(date, {
+      cancelOnCloseRes: res,
+    });
+    res.json(data);
   }),
 );
 
@@ -366,17 +283,10 @@ router.get(
         .json({ error: "Invalid month format; expected YYYY-MM." });
     }
 
-    try {
-      const data = await getMonthlySummary(month, {
-        cancelOnCloseRes: res,
-      });
-      res.json(data);
-    } catch (err) {
-      if (err.status === 400) {
-        return res.status(400).json({ error: err.message });
-      }
-      throw err;
-    }
+    const data = await getMonthlySummary(month, {
+      cancelOnCloseRes: res,
+    });
+    res.json(data);
   }),
 );
 

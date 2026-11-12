@@ -70,3 +70,14 @@ function getStalenessCategory(ms) {
     STALENESS_CATEGORIES[STALENESS_CATEGORIES.length - 1]
   );
 }
+
+if (typeof module !== "undefined" && module.exports) {
+  module.exports = {
+    DELAY_CATEGORIES,
+    STALENESS_CATEGORIES,
+    formatDelay,
+    formatStaleness,
+    getCategory,
+    getStalenessCategory,
+  };
+}
