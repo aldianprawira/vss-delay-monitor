@@ -1,0 +1,689 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Monthly Summary · VSS Monitoring</title>
+    <link rel="stylesheet" href="/assets/common.css" />
+    <script src="/format.js"></script>
+    <script
+      async
+      src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"
+    ></script>
+    <script
+      defer
+      src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"
+    ></script>
+    <script src="/assets/common.js"></script>
+  </head>
+  <body
+    data-page="monthly"
+    data-title="Monthly Summary"
+    data-sub="Monthly fleet offline frequency and daily delay trends"
+  >
+    <main class="content">
+      <div id="err" class="banner" style="display: none" role="alert"></div>
+
+      <div class="grid kpis" id="kpis"></div>
+
+      <div class="card" style="margin-bottom: 16px">
+        <h3>Daily staleness distribution (captured at 00:00)</h3>
+        <div class="chart-box tall"><canvas id="staleBar"></canvas></div>
+      </div>
+
+      <div class="card" style="margin-bottom: 16px">
+        <h3>Daily devices with average delay &gt; 5s</h3>
+        <div class="chart-box tall"><canvas id="delayBar"></canvas></div>
+      </div>
+
+      <div class="card" id="offlineCard" style="margin-bottom: 16px">
+        <div class="toolbar">
+          <h3 style="margin: 0">
+            Monthly offline frequency (captured at 00:00)
+          </h3>
+          <span class="spacer"></span>
+          <label for="offlineQ" class="sr-only"
+            >Search offline device by name or ID</label
+          >
+          <input
+            id="offlineQ"
+            class="q"
+            type="search"
+            placeholder="Search offline device…"
+            style="min-width: 220px"
+          />
+          <button
+            id="exportOffline"
+            type="button"
+            class="btn-primary"
+            disabled
+          >
+            Export Excel
+          </button>
+          <span class="count pill"></span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th scope="col" class="sortable" data-sort="deviceName">
+                  Device <span class="si"></span>
+                </th>
+                <th scope="col" class="sortable" data-sort="deviceId">
+                  Device ID <span class="si"></span>
+                </th>
+                <th scope="col" class="sortable" data-sort="daysOffline">
+                  Days Offline <span class="si"></span>
+                </th>
+                <th scope="col" class="sortable" data-sort="maxAgeMs">
+                  Max Silent Duration <span class="si"></span>
+                </th>
+                <th scope="col" class="sortable" data-sort="firstOfflineDate">
+                  First Offline <span class="si"></span>
+                </th>
+                <th scope="col" class="sortable" data-sort="lastOfflineDate">
+                  Last Offline <span class="si"></span>
+                </th>
+                <th scope="col"><span class="sr-only">Actions</span></th>
+              </tr>
+            </thead>
+            <tbody class="rows"></tbody>
+          </table>
+        </div>
+        <div class="pager">
+          <label for="offlinePageSize">
+            Rows per page
+            <select id="offlinePageSize" class="pageSize">
+              <option value="50" selected>50</option>
+              <option value="100">100</option>
+              <option value="200">200</option>
+            </select>
+          </label>
+          <button class="prev" type="button">‹ Previous</button>
+          <span class="pageInfo"></span>
+          <button class="next" type="button">Next ›</button>
+        </div>
+      </div>
+
+      <div class="card" id="delayCard">
+        <div class="toolbar">
+          <h3 style="margin: 0">Monthly device delay summary</h3>
+          <span class="spacer"></span>
+          <label for="delayQ" class="sr-only"
+            >Search device in monthly delay summary</label
+          >
+          <input
+            id="delayQ"
+            class="q"
+            type="search"
+            placeholder="Search device…"
+            style="min-width: 220px"
+          />
+          <button id="exportDelay" type="button" class="btn-primary" disabled>
+            Export Excel
+          </button>
+          <span class="count pill"></span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th scope="col" class="sortable" data-sort="deviceName">
+                  Device <span class="si"></span>
+                </th>
+                <th scope="col" class="sortable" data-sort="deviceId">
+                  Device ID <span class="si"></span>
+                </th>
+                <th scope="col" class="sortable" data-sort="activeDays">
+                  Active Days <span class="si"></span>
+                </th>
+                <th scope="col" class="sortable" data-sort="daysOver5s">
+                  Days Avg &gt; 5s <span class="si"></span>
+                </th>
+                <th scope="col" class="sortable" data-sort="count">
+                  Records <span class="si"></span>
+                </th>
+                <th scope="col" class="sortable" data-sort="minDelay">
+                  Min <span class="si"></span>
+                </th>
+                <th scope="col" class="sortable" data-sort="avgDelay">
+                  Avg <span class="si"></span>
+                </th>
+                <th scope="col" class="sortable" data-sort="maxDelay">
+                  Max <span class="si"></span>
+                </th>
+                <th scope="col"><span class="sr-only">Actions</span></th>
+              </tr>
+            </thead>
+            <tbody class="rows"></tbody>
+          </table>
+        </div>
+        <div class="pager">
+          <label for="delayPageSize">
+            Rows per page
+            <select id="delayPageSize" class="pageSize">
+              <option value="50" selected>50</option>
+              <option value="100">100</option>
+              <option value="200">200</option>
+            </select>
+          </label>
+          <button class="prev" type="button">‹ Previous</button>
+          <span class="pageInfo"></span>
+          <button class="next" type="button">Next ›</button>
+        </div>
+      </div>
+    </main>
+
+    <script>
+      document.addEventListener("shell-ready", () => {
+        const monthlyState = {
+          month: "",
+          totals: null,
+          days: [],
+        };
+
+        const offlineState = {
+          all: [],
+          q: "",
+          sort: "daysOffline",
+          dir: "desc",
+          page: 0,
+          pageSize: 50,
+        };
+
+        const delayState = {
+          all: [],
+          q: "",
+          sort: "avgDelay",
+          dir: "desc",
+          page: 0,
+          pageSize: 50,
+        };
+
+        // Default to yesterday's WIB month so on the 1st of a new month the report opens with the completed prior month.
+        const defaultWibMonth = () =>
+          new Date(Date.now() + (7 - 24) * 3600 * 1000)
+            .toISOString()
+            .slice(0, 7);
+
+        const maxWibMonth = () =>
+          new Date(Date.now() + 7 * 3600 * 1000).toISOString().slice(0, 7);
+
+        const NUMERIC_OFFLINE_COLS = ["daysOffline", "maxAgeMs"];
+
+        const offlineTable = createTableController({
+          root: "#offlineCard",
+          state: offlineState,
+          colSpan: 7,
+          emptyMessage:
+            "No offline devices recorded in captured snapshots for this month, or clear your search filter.",
+          prepareItems(s) {
+            const q = s.q.trim().toLowerCase();
+            return s.all.filter(
+              (d) =>
+                !q ||
+                (d.deviceName || "").toLowerCase().includes(q) ||
+                String(d.deviceId).toLowerCase().includes(q),
+            );
+          },
+          getSortValue(d, col) {
+            return NUMERIC_OFFLINE_COLS.includes(col)
+              ? Number(d[col])
+              : String(d[col] ?? "").toLowerCase();
+          },
+          renderRow(d) {
+            const cap = monthlyState.totals?.capturedDays || 1;
+            const threshold = monthlyState.totals?.chronicThreshold || 3;
+            const tone = d.daysOffline >= threshold ? "err" : "warn";
+            const freqBadge = badge({
+              key: `${d.daysOffline} / ${cap}d (${pct(d.daysOffline, cap)}%)`,
+              tone,
+            });
+            return `<tr>
+              <td>${esc(d.deviceName || "-")}</td>
+              <td class="mono">${esc(d.deviceId)}</td>
+              <td>${freqBadge}</td>
+              <td>${formatStaleness(d.maxAgeMs)}</td>
+              <td class="mono">${esc(d.firstOfflineDate)}</td>
+              <td class="mono">${esc(d.lastOfflineDate)}</td>
+              <td><a class="btn-primary" href="${detailHref(d.deviceId, d.deviceName)}">Details</a></td>
+            </tr>`;
+          },
+          onAfterRender(list) {
+            $("#exportOffline").disabled = list.length === 0;
+          },
+        });
+
+        const NUMERIC_DELAY_COLS = [
+          "activeDays",
+          "daysOver5s",
+          "count",
+          "minDelay",
+          "avgDelay",
+          "maxDelay",
+        ];
+
+        const delayTable = createTableController({
+          root: "#delayCard",
+          state: delayState,
+          colSpan: 9,
+          emptyMessage:
+            "No device delay records found in captured snapshots for this month, or clear your search filter.",
+          prepareItems(s) {
+            const q = s.q.trim().toLowerCase();
+            return s.all.filter(
+              (d) =>
+                !q ||
+                (d.deviceName || "").toLowerCase().includes(q) ||
+                String(d.deviceId).toLowerCase().includes(q),
+            );
+          },
+          getSortValue(d, col) {
+            return NUMERIC_DELAY_COLS.includes(col)
+              ? Number(d[col])
+              : String(d[col] ?? "").toLowerCase();
+          },
+          renderRow(d) {
+            const over5sTone = d.daysOver5s > 0 ? "warn" : "ok";
+            const over5sBadge = badge({
+              key: `${d.daysOver5s}d`,
+              tone: over5sTone,
+            });
+            return `<tr>
+              <td>${esc(d.deviceName || "-")}</td>
+              <td class="mono">${esc(d.deviceId)}</td>
+              <td>${d.activeDays}d</td>
+              <td>${over5sBadge}</td>
+              <td>${d.count.toLocaleString()}</td>
+              <td>${formatDelay(d.minDelay)}</td>
+              <td>${formatDelay(d.avgDelay)} ${badge(getCategory(d.avgDelay))}</td>
+              <td>${formatDelay(d.maxDelay)} ${badge(getCategory(d.maxDelay))}</td>
+              <td><a class="btn-primary" href="${detailHref(d.deviceId, d.deviceName)}">Details</a></td>
+            </tr>`;
+          },
+          onAfterRender(list) {
+            $("#exportDelay").disabled = list.length === 0;
+          },
+        });
+
+        function renderKpis() {
+          const t = monthlyState.totals;
+          const covEl = $("#coveragePill");
+          if (!t) {
+            $("#kpis").innerHTML = "";
+            if (covEl) covEl.textContent = "0 days captured";
+            return;
+          }
+          if (covEl) {
+            covEl.textContent = `${t.capturedDays} of ${t.daysInMonth} days captured`;
+          }
+
+          const peakOffHint = t.peakOffline?.date
+            ? `Peak: ${t.peakOffline.count.toLocaleString()} offline on ${t.peakOffline.date}`
+            : "No captured snapshots yet";
+          const peakDelayHint = t.peakDelayOver5s?.date
+            ? `Peak: ${t.peakDelayOver5s.count.toLocaleString()} devices on ${t.peakDelayOver5s.date}`
+            : "No captured snapshots yet";
+
+          $("#kpis").innerHTML =
+            kpi(
+              "Avg daily offline (00:00)",
+              t.avgDailyOffline.toLocaleString(),
+              peakOffHint,
+              t.avgDailyOffline > 0 ? "err" : "ok",
+            ) +
+            kpi(
+              "Avg daily devices delay > 5s",
+              t.avgDailyDelayOver5s.toLocaleString(),
+              peakDelayHint,
+              t.avgDailyDelayOver5s > 0 ? "warn" : "ok",
+            ) +
+            kpi(
+              "Chronic offline devices",
+              t.chronicOfflineCount.toLocaleString(),
+              `Offline ≥ ${t.chronicThreshold}d · ${t.uniqueOfflineDevices.toLocaleString()} ever offline`,
+              t.chronicOfflineCount > 0 ? "err" : "ok",
+            ) +
+            kpi(
+              "Total monthly records",
+              t.totalRecords.toLocaleString(),
+              `Across ${t.capturedDays} captured days (avg ${t.avgDailyRecords.toLocaleString()}/day)`,
+              "primary",
+            );
+        }
+
+        function stackedBarConfig(labels, datasets, footerFormatter) {
+          const tokens = getThemeChartTokens();
+          return {
+            type: "bar",
+            data: { labels, datasets },
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              interaction: { mode: "index", intersect: false },
+              scales: {
+                x: {
+                  stacked: true,
+                  grid: { display: false },
+                },
+                y: {
+                  stacked: true,
+                  beginAtZero: true,
+                  grid: { color: tokens.gridColor },
+                  ticks: { precision: 0 },
+                },
+              },
+              plugins: {
+                legend: {
+                  position: "top",
+                  align: "end",
+                  labels: {
+                    boxWidth: 12,
+                    boxHeight: 12,
+                    usePointStyle: true,
+                    pointStyle: "rectRounded",
+                    padding: 14,
+                  },
+                },
+                tooltip: {
+                  callbacks: {
+                    title: (items) => {
+                      const day = monthlyState.days[items[0]?.dataIndex];
+                      if (!day) return "";
+                      return day.captured
+                        ? day.date
+                        : `${day.date} (no snapshot captured)`;
+                    },
+                    footer: (items) =>
+                      footerFormatter ? footerFormatter(items) : "",
+                  },
+                },
+              },
+            },
+          };
+        }
+
+        function renderCharts() {
+          const labels = monthlyState.days.map((d) => d.dayLabel);
+
+          const colorOffline =
+            (STALENESS_CATEGORIES.find((c) => c.key === "OFFLINE") || {})
+              .color || "#dc2626";
+          const colorWarning =
+            (STALENESS_CATEGORIES.find((c) => c.key === "WARNING") || {})
+              .color || "#d97706";
+          const colorOnline =
+            (STALENESS_CATEGORIES.find((c) => c.key === "ONLINE") || {})
+              .color || "#059669";
+
+          upsertChart(
+            "staleBar",
+            stackedBarConfig(
+              labels,
+              [
+                {
+                  label: "OFFLINE",
+                  data: monthlyState.days.map((d) => d.offline),
+                  backgroundColor: colorOffline,
+                  borderRadius: 2,
+                },
+                {
+                  label: "WARNING",
+                  data: monthlyState.days.map((d) => d.warning),
+                  backgroundColor: colorWarning,
+                  borderRadius: 2,
+                },
+                {
+                  label: "ONLINE",
+                  data: monthlyState.days.map((d) => d.online),
+                  backgroundColor: colorOnline,
+                  borderRadius: 2,
+                },
+              ],
+              (items) => {
+                const day = monthlyState.days[items[0]?.dataIndex];
+                if (!day || !day.captured) return "";
+                const sum = items.reduce(
+                  (acc, it) => acc + Number(it.parsed.y || 0),
+                  0,
+                );
+                return `Total shown: ${sum.toLocaleString()} devices`;
+              },
+            ),
+          );
+
+          const colorOver1m =
+            (DELAY_CATEGORIES.find((c) => c.key === ">1m") || {}).color ||
+            "#dc2626";
+          const color5sto1m =
+            (DELAY_CATEGORIES.find((c) => c.key === "5s-1m") || {}).color ||
+            "#d97706";
+
+          upsertChart(
+            "delayBar",
+            stackedBarConfig(
+              labels,
+              [
+                {
+                  label: ">1m",
+                  data: monthlyState.days.map((d) => d.delayOver1m),
+                  backgroundColor: colorOver1m,
+                  borderRadius: 2,
+                },
+                {
+                  label: "5s-1m",
+                  data: monthlyState.days.map((d) => d.delay5sto1m),
+                  backgroundColor: color5sto1m,
+                  borderRadius: 2,
+                },
+              ],
+              (items) => {
+                const day = monthlyState.days[items[0]?.dataIndex];
+                if (!day || !day.captured) return "";
+                const sum = items.reduce(
+                  (acc, it) => acc + Number(it.parsed.y || 0),
+                  0,
+                );
+                return `Total avg delay > 5s: ${sum.toLocaleString()} devices`;
+              },
+            ),
+          );
+        }
+
+        function exportOfflineXlsx() {
+          if (!window.XLSX) {
+            alert(
+              "Failed to load Excel library. Please check your internet connection and reload the page.",
+            );
+            return;
+          }
+          const cap = monthlyState.totals?.capturedDays || 1;
+          const rows = offlineTable.getFilteredAndSorted().map((d) => ({
+            Device: d.deviceName || "-",
+            "Device ID": String(d.deviceId),
+            "Days Offline": d.daysOffline,
+            "Captured Days": cap,
+            "Offline Rate (%)": Number(pct(d.daysOffline, cap)),
+            "Max Silent Duration": formatStaleness(d.maxAgeMs),
+            "First Offline Date": d.firstOfflineDate,
+            "Last Offline Date": d.lastOfflineDate,
+          }));
+
+          const ws = XLSX.utils.json_to_sheet(rows, {
+            header: [
+              "Device",
+              "Device ID",
+              "Days Offline",
+              "Captured Days",
+              "Offline Rate (%)",
+              "Max Silent Duration",
+              "First Offline Date",
+              "Last Offline Date",
+            ],
+          });
+          ws["!cols"] = [
+            { wch: 28 },
+            { wch: 24 },
+            { wch: 14 },
+            { wch: 14 },
+            { wch: 16 },
+            { wch: 20 },
+            { wch: 18 },
+            { wch: 18 },
+          ];
+
+          const wb = XLSX.utils.book_new();
+          XLSX.utils.book_append_sheet(wb, ws, "Monthly Offline Frequency");
+          XLSX.writeFile(
+            wb,
+            `monthly-summary-offline-devices_${monthlyState.month || "data"}.xlsx`,
+          );
+        }
+
+        function exportDelayXlsx() {
+          if (!window.XLSX) {
+            alert(
+              "Failed to load Excel library. Please check your internet connection and reload the page.",
+            );
+            return;
+          }
+          const rows = delayTable.getFilteredAndSorted().map((d) => ({
+            Device: d.deviceName || "-",
+            "Device ID": String(d.deviceId),
+            "Active Days": d.activeDays,
+            "Days Avg > 5s": d.daysOver5s,
+            Records: d.count,
+            Min: formatDelay(d.minDelay),
+            Avg: `${formatDelay(d.avgDelay)} (${getCategory(d.avgDelay).key})`,
+            Max: `${formatDelay(d.maxDelay)} (${getCategory(d.maxDelay).key})`,
+          }));
+
+          const ws = XLSX.utils.json_to_sheet(rows, {
+            header: [
+              "Device",
+              "Device ID",
+              "Active Days",
+              "Days Avg > 5s",
+              "Records",
+              "Min",
+              "Avg",
+              "Max",
+            ],
+          });
+          ws["!cols"] = [
+            { wch: 28 },
+            { wch: 24 },
+            { wch: 14 },
+            { wch: 16 },
+            { wch: 14 },
+            { wch: 14 },
+            { wch: 18 },
+            { wch: 18 },
+          ];
+
+          const wb = XLSX.utils.book_new();
+          XLSX.utils.book_append_sheet(wb, ws, "Monthly Delay Summary");
+          XLSX.writeFile(
+            wb,
+            `monthly-summary-delay_${monthlyState.month || "data"}.xlsx`,
+          );
+        }
+
+        const pickerSlot = $("#timePicker");
+        pickerSlot.innerHTML = `
+          <div style="display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <span id="coveragePill" class="pill" title="Number of days in this month with a midnight snapshot">…</span>
+            <label for="month" class="sr-only">Summary month</label>
+            <input id="month" type="month" aria-label="Summary month" />
+            <button id="cancelLoad" type="button" class="trp-cancel" style="display:none">✕ Cancel</button>
+          </div>
+        `;
+
+        const monthEl = $("#month");
+        const cancelBtn = $("#cancelLoad");
+        monthEl.value = defaultWibMonth();
+        monthEl.max = maxWibMonth();
+
+        offlineTable.bindControls();
+        delayTable.bindControls();
+
+        $("#exportOffline").addEventListener("click", exportOfflineXlsx);
+        $("#exportDelay").addEventListener("click", exportDelayXlsx);
+
+        let activeController = null;
+        let previousMonth = monthEl.value;
+
+        cancelBtn.addEventListener("click", () => {
+          if (activeController) {
+            monthEl.value = previousMonth;
+            activeController.abort();
+          }
+        });
+
+        monthEl.addEventListener("change", () => load());
+
+        load();
+
+        async function load() {
+          if (activeController) activeController.abort();
+          const controller = new AbortController();
+          activeController = controller;
+
+          const err = $("#err");
+          err.style.display = "none";
+          monthEl.disabled = true;
+          cancelBtn.style.display = "inline-flex";
+
+          try {
+            const data = await api(
+              `/api/monthly-summary?month=${encodeURIComponent(monthEl.value)}`,
+              { signal: controller.signal },
+            );
+            if (activeController !== controller) return;
+
+            previousMonth = data.month;
+            monthlyState.month = data.month;
+            monthlyState.totals = data.totals;
+            monthlyState.days = data.days || [];
+            offlineState.all = data.offlineDevices || [];
+            offlineState.page = 0;
+            delayState.all = data.delayDevices || [];
+            delayState.page = 0;
+
+            renderKpis();
+            renderCharts();
+            offlineTable.render();
+            delayTable.render();
+            setStatus(true);
+          } catch (e) {
+            if (controller.signal.aborted || e?.name === "AbortError") {
+              if (activeController === controller) {
+                setStatus(true, "Query cancelled");
+              }
+              return;
+            }
+            monthlyState.totals = null;
+            monthlyState.days = [];
+            offlineState.all = [];
+            delayState.all = [];
+            err.innerHTML = `<div style="flex:1"><strong>Failed to load monthly summary</strong>${esc(e.message)}. Select another month or try again.</div><button type="button" class="btn-primary" id="retryMonthlyBtn">Retry now</button>`;
+            err.style.display = "flex";
+            const retryBtn = $("#retryMonthlyBtn", err);
+            if (retryBtn) retryBtn.addEventListener("click", () => load());
+            renderKpis();
+            renderCharts();
+            offlineTable.render();
+            delayTable.render();
+            setStatus(false);
+          } finally {
+            if (activeController === controller) {
+              activeController = null;
+              monthEl.disabled = false;
+              cancelBtn.style.display = "none";
+            }
+          }
+        }
+      });
+    </script>
+  </body>
+</html>

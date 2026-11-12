@@ -266,7 +266,261 @@ async function startDailySummaryScheduler() {
   scheduleNextMidnightCapture();
 }
 
+async function backfillMissingSnapshotsInWindow(
+  windowStart,
+  windowEnd,
+  existingDatesSet,
+  { cancelOnCloseRes } = {},
+) {
+  const oldestRetained = dayjs()
+    .tz(DEVICE_TZ)
+    .subtract(HISTORY_RETENTION_DAYS, "day")
+    .startOf("day");
+  const todayStart = dayjs().tz(DEVICE_TZ).startOf("day");
+
+  const scanStart = windowStart.isAfter(oldestRetained)
+    ? windowStart
+    : oldestRetained;
+  const scanEnd = windowEnd.isBefore(todayStart) ? windowEnd : todayStart;
+
+  if (!scanStart.isBefore(scanEnd)) return;
+
+  const { rows } = await withTransaction(
+    apiPool,
+    (client) =>
+      client.query(
+        `SELECT DISTINCT (received_at AT TIME ZONE $3)::date::text AS date_str
+         FROM device_delay_history
+         WHERE received_at >= $1 AND received_at < $2
+         ORDER BY date_str ASC`,
+        [scanStart.toDate(), scanEnd.toDate(), DEVICE_TZ],
+      ),
+    { statementTimeoutMs: SUMMARY_TIMEOUT_MS, cancelOnCloseRes },
+  );
+
+  for (const row of rows) {
+    if (!existingDatesSet.has(row.date_str)) {
+      await computeDailySummary(row.date_str, { cancelOnCloseRes });
+      existingDatesSet.add(row.date_str);
+    }
+  }
+}
+
+async function getMonthlySummary(monthStr, { cancelOnCloseRes } = {}) {
+  const monthStart = dayjs.tz(`${monthStr}-01 00:00:00`, DEVICE_TZ);
+  if (!monthStart.isValid()) {
+    const err = new Error("Invalid month format; expected YYYY-MM.");
+    err.status = 400;
+    throw err;
+  }
+  const now = dayjs().tz(DEVICE_TZ);
+  if (monthStart.isAfter(now.startOf("month"))) {
+    const err = new Error("Month cannot be in the future.");
+    err.status = 400;
+    throw err;
+  }
+
+  const monthEnd = monthStart.add(1, "month");
+  const daysInMonth = monthStart.daysInMonth();
+
+  const initialRes = await apiPool.query(
+    `SELECT summary_date::text AS date_str
+     FROM daily_summary_snapshots
+     WHERE summary_date >= $1 AND summary_date < $2`,
+    [monthStart.format("YYYY-MM-DD"), monthEnd.format("YYYY-MM-DD")],
+  );
+  const existingDates = new Set(initialRes.rows.map((r) => r.date_str));
+
+  await backfillMissingSnapshotsInWindow(monthStart, monthEnd, existingDates, {
+    cancelOnCloseRes,
+  });
+
+  const { rows } = await apiPool.query(
+    `SELECT summary_date::text AS date_str, data
+     FROM daily_summary_snapshots
+     WHERE summary_date >= $1 AND summary_date < $2
+     ORDER BY summary_date ASC`,
+    [monthStart.format("YYYY-MM-DD"), monthEnd.format("YYYY-MM-DD")],
+  );
+
+  const snapshotByDate = new Map(rows.map((r) => [r.date_str, r.data]));
+  const capturedDays = rows.length;
+
+  const days = [];
+  let sumOffline = 0;
+  let sumDelayOver5s = 0;
+  let totalRecords = 0;
+  let peakOffline = { count: 0, date: null };
+  let peakDelayOver5s = { count: 0, date: null };
+
+  const offlineMap = new Map();
+  const delayMap = new Map();
+
+  for (let d = 1; d <= daysInMonth; d++) {
+    const dayStr = String(d).padStart(2, "0");
+    const dateStr = `${monthStr}-${dayStr}`;
+    const snap = snapshotByDate.get(dateStr);
+
+    if (!snap) {
+      days.push({
+        date: dateStr,
+        dayLabel: dayStr,
+        captured: false,
+        online: 0,
+        warning: 0,
+        offline: 0,
+        delay0to5s: 0,
+        delay5sto1m: 0,
+        delayOver1m: 0,
+        delayOver5s: 0,
+        records: 0,
+      });
+      continue;
+    }
+
+    const online = Number(snap.totals?.onlineDevices || 0);
+    const warning = Number(snap.totals?.warningDevices || 0);
+    const offline = Number(snap.totals?.offlineDevices || 0);
+    const records = Number(snap.totals?.records || 0);
+
+    let delay0to5s = 0;
+    let delay5sto1m = 0;
+    let delayOver1m = 0;
+
+    for (const dev of snap.devices || []) {
+      const avg = Math.abs(Number(dev.avgDelay) || 0);
+      if (avg < 5000) delay0to5s++;
+      else if (avg < 60000) delay5sto1m++;
+      else delayOver1m++;
+
+      const cur = delayMap.get(dev.deviceId);
+      const cnt = Number(dev.count) || 0;
+      const minD = Number(dev.minDelay) || 0;
+      const maxD = Number(dev.maxDelay) || 0;
+      const avgD = Number(dev.avgDelay) || 0;
+      const isOver5s = avg >= 5000 ? 1 : 0;
+
+      if (!cur) {
+        delayMap.set(dev.deviceId, {
+          deviceId: dev.deviceId,
+          deviceName: dev.deviceName || null,
+          activeDays: 1,
+          daysOver5s: isOver5s,
+          count: cnt,
+          minDelay: minD,
+          maxDelay: maxD,
+          weightedDelaySum: avgD * cnt,
+        });
+      } else {
+        cur.activeDays++;
+        cur.daysOver5s += isOver5s;
+        cur.count += cnt;
+        if (minD < cur.minDelay) cur.minDelay = minD;
+        if (maxD > cur.maxDelay) cur.maxDelay = maxD;
+        cur.weightedDelaySum += avgD * cnt;
+        if (dev.deviceName) cur.deviceName = dev.deviceName;
+      }
+    }
+
+    for (const off of snap.offlineDevices || []) {
+      const cur = offlineMap.get(off.deviceId);
+      const ageMs = Number(off.ageMs) || 0;
+      if (!cur) {
+        offlineMap.set(off.deviceId, {
+          deviceId: off.deviceId,
+          deviceName: off.deviceName || null,
+          daysOffline: 1,
+          firstOfflineDate: dateStr,
+          lastOfflineDate: dateStr,
+          maxAgeMs: ageMs,
+          lastReceived: off.lastReceived,
+        });
+      } else {
+        cur.daysOffline++;
+        cur.lastOfflineDate = dateStr;
+        if (ageMs > cur.maxAgeMs) cur.maxAgeMs = ageMs;
+        if (off.lastReceived > cur.lastReceived) {
+          cur.lastReceived = off.lastReceived;
+        }
+        if (off.deviceName) cur.deviceName = off.deviceName;
+      }
+    }
+
+    const delayOver5s = delay5sto1m + delayOver1m;
+    sumOffline += offline;
+    sumDelayOver5s += delayOver5s;
+    totalRecords += records;
+
+    if (peakOffline.date === null || offline > peakOffline.count) {
+      peakOffline = { count: offline, date: dateStr };
+    }
+    if (peakDelayOver5s.date === null || delayOver5s > peakDelayOver5s.count) {
+      peakDelayOver5s = { count: delayOver5s, date: dateStr };
+    }
+
+    days.push({
+      date: dateStr,
+      dayLabel: dayStr,
+      captured: true,
+      online,
+      warning,
+      offline,
+      delay0to5s,
+      delay5sto1m,
+      delayOver1m,
+      delayOver5s,
+      records,
+    });
+  }
+
+  const offlineDevices = [...offlineMap.values()].sort(
+    (a, b) => b.daysOffline - a.daysOffline || b.maxAgeMs - a.maxAgeMs,
+  );
+
+  const delayDevices = [...delayMap.values()]
+    .map((d) => ({
+      deviceId: d.deviceId,
+      deviceName: d.deviceName,
+      activeDays: d.activeDays,
+      daysOver5s: d.daysOver5s,
+      count: d.count,
+      minDelay: d.minDelay,
+      maxDelay: d.maxDelay,
+      avgDelay: d.count > 0 ? Math.round(d.weightedDelaySum / d.count) : 0,
+    }))
+    .sort((a, b) => b.avgDelay - a.avgDelay || b.maxDelay - a.maxDelay);
+
+  const chronicThreshold = Math.min(3, Math.max(1, capturedDays));
+  const chronicOfflineCount = offlineDevices.filter(
+    (d) => d.daysOffline >= chronicThreshold,
+  ).length;
+
+  return {
+    month: monthStr,
+    totals: {
+      daysInMonth,
+      capturedDays,
+      avgDailyOffline:
+        capturedDays > 0 ? Math.round(sumOffline / capturedDays) : 0,
+      peakOffline,
+      avgDailyDelayOver5s:
+        capturedDays > 0 ? Math.round(sumDelayOver5s / capturedDays) : 0,
+      peakDelayOver5s,
+      chronicOfflineCount,
+      chronicThreshold,
+      uniqueOfflineDevices: offlineDevices.length,
+      totalRecords,
+      avgDailyRecords:
+        capturedDays > 0 ? Math.round(totalRecords / capturedDays) : 0,
+    },
+    days,
+    offlineDevices,
+    delayDevices,
+  };
+}
+
 module.exports = {
   getOrGenerateDailySummary,
+  getMonthlySummary,
   startDailySummaryScheduler,
 };

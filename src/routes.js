@@ -15,7 +15,10 @@ const {
   apiPool,
   isDatabaseReachable,
 } = require("./db");
-const { getOrGenerateDailySummary } = require("./dailySummary");
+const {
+  getOrGenerateDailySummary,
+  getMonthlySummary,
+} = require("./dailySummary");
 const {
   ingest,
   trafficCumulative,
@@ -337,6 +340,34 @@ router.get(
 
     try {
       const data = await getOrGenerateDailySummary(date, {
+        cancelOnCloseRes: res,
+      });
+      res.json(data);
+    } catch (err) {
+      if (err.status === 400) {
+        return res.status(400).json({ error: err.message });
+      }
+      throw err;
+    }
+  }),
+);
+
+router.get(
+  "/api/monthly-summary",
+  asyncHandler(async (req, res) => {
+    const defaultMonth = dayjs()
+      .tz(DEVICE_TZ)
+      .subtract(1, "day")
+      .format("YYYY-MM");
+    const month = String(req.query.month || defaultMonth);
+    if (!/^\d{4}-\d{2}$/.test(month)) {
+      return res
+        .status(400)
+        .json({ error: "Invalid month format; expected YYYY-MM." });
+    }
+
+    try {
+      const data = await getMonthlySummary(month, {
         cancelOnCloseRes: res,
       });
       res.json(data);

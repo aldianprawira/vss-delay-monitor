@@ -3,6 +3,7 @@ const NAV = [
   { href: "/traffic.html", key: "traffic", label: "Traffic" },
   { href: "/devices.html", key: "devices", label: "Live Monitoring" },
   { href: "/summary.html", key: "summary", label: "Daily Summary" },
+  { href: "/monthly.html", key: "monthly", label: "Monthly Summary" },
 ];
 
 const THEME_STORAGE_KEY = "vss_theme";
