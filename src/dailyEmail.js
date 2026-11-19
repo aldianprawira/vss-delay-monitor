@@ -1,3 +1,4 @@
+const path = require("path");
 const nodemailer = require("nodemailer");
 const XLSX = require("xlsx");
 const { Resvg } = require("@resvg/resvg-js");
@@ -50,10 +51,17 @@ function pct(n, total) {
   return total > 0 ? ((n / total) * 100).toFixed(1) : "0.0";
 }
 
+const FONT_REGULAR = path.join(__dirname, "assets/fonts/Roboto-Regular.ttf");
+const FONT_BOLD = path.join(__dirname, "assets/fonts/Roboto-Bold.ttf");
+
 function svgToPng(svg) {
   const resvg = new Resvg(svg, {
     fitTo: { mode: "original" },
-    font: { loadSystemFonts: true },
+    font: {
+      fontFiles: [FONT_REGULAR, FONT_BOLD],
+      loadSystemFonts: false,
+      defaultFontFamily: "Roboto",
+    },
   });
   return resvg.render().asPng();
 }
@@ -121,7 +129,7 @@ function renderDoughnutSvg(items) {
       const label = `${it.label}: ${Number(it.value || 0).toLocaleString()} (${pct(it.value, total)}%)`;
       return `
         <rect x="230" y="${y - 10}" width="12" height="12" rx="3" fill="${it.color}" />
-        <text x="250" y="${y}" font-family="Arial, sans-serif" font-size="13" font-weight="600" fill="#334155">${escHtml(label)}</text>
+        <text x="250" y="${y}" font-family="Roboto, Arial, sans-serif" font-size="13" font-weight="600" fill="#334155">${escHtml(label)}</text>
       `;
     })
     .join("");
@@ -164,7 +172,7 @@ function renderStackedBarSvg(days, seriesList, valueGetter) {
     const y = padT + plotH - (v / yMax) * plotH;
     gridLines += `
       <line x1="${padL}" y1="${y.toFixed(1)}" x2="${width - padR}" y2="${y.toFixed(1)}" stroke="#e2e8f0" stroke-width="1" />
-      <text x="${padL - 8}" y="${(y + 4).toFixed(1)}" text-anchor="end" font-family="Arial, sans-serif" font-size="11" fill="#64748b">${v.toLocaleString()}</text>
+      <text x="${padL - 8}" y="${(y + 4).toFixed(1)}" text-anchor="end" font-family="Roboto, Arial, sans-serif" font-size="11" fill="#64748b">${v.toLocaleString()}</text>
     `;
   }
 
@@ -186,7 +194,7 @@ function renderStackedBarSvg(days, seriesList, valueGetter) {
       bars += `<rect x="${x.toFixed(1)}" y="${yCursor.toFixed(1)}" width="${barW.toFixed(1)}" height="${Math.max(1, h).toFixed(1)}" fill="${s.color}" rx="1.5" />`;
     }
 
-    xLabels += `<text x="${cx.toFixed(1)}" y="${height - 10}" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#64748b">${escHtml(d.dayLabel)}</text>`;
+    xLabels += `<text x="${cx.toFixed(1)}" y="${height - 10}" text-anchor="middle" font-family="Roboto, Arial, sans-serif" font-size="11" fill="#64748b">${escHtml(d.dayLabel)}</text>`;
   });
 
   // Render legend right-aligned at the top.
@@ -198,7 +206,7 @@ function renderStackedBarSvg(days, seriesList, valueGetter) {
     legendX -= textW;
     legend += `
       <rect x="${legendX}" y="10" width="12" height="12" rx="3" fill="${s.color}" />
-      <text x="${legendX + 16}" y="20" font-family="Arial, sans-serif" font-size="12" font-weight="600" fill="#475569">${escHtml(s.key)}</text>
+      <text x="${legendX + 16}" y="20" font-family="Roboto, Arial, sans-serif" font-size="12" font-weight="600" fill="#475569">${escHtml(s.key)}</text>
     `;
     legendX -= 10;
   }
