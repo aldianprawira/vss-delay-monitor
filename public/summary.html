@@ -395,7 +395,11 @@
 
         const dateEl = $("#date");
         const cancelBtn = $("#cancelLoad");
-        dateEl.value = wibDateOffset(-1);
+        const urlDate = new URLSearchParams(location.search).get("date");
+        dateEl.value =
+          urlDate && /^\d{4}-\d{2}-\d{2}$/.test(urlDate)
+            ? urlDate
+            : wibDateOffset(-1);
         dateEl.max = wibDateOffset(0);
 
         offlineTable.bindControls();

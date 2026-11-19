@@ -45,4 +45,18 @@ module.exports = {
   MAINTENANCE_RETRY_MS: 5 * 60 * 1000,
 
   SUMMARY_TIMEOUT_MS: 60000,
+
+  EMAIL_ENABLED: process.env.EMAIL_ENABLED === "true",
+  EMAIL_TEST_MODE: process.env.EMAIL_TEST_MODE !== "false",
+  EMAIL_SEND_HOUR: Number(process.env.EMAIL_SEND_HOUR ?? 10),
+  EMAIL_SEND_MINUTE: Number(process.env.EMAIL_SEND_MINUTE ?? 0),
+  SMTP_HOST: process.env.SMTP_HOST || "smtpgw2.ioh.co.id",
+  SMTP_PORT: Number(process.env.SMTP_PORT || 25),
+  SMTP_SECURE: process.env.SMTP_SECURE === "true",
+  SMTP_USER: process.env.SMTP_USER || "",
+  SMTP_PASS: process.env.SMTP_PASS || "",
+  EMAIL_FROM: process.env.EMAIL_FROM || "b2bops_alert_noreply@ioh.co.id",
+  EMAIL_TO: process.env.EMAIL_TO || "",
+  EMAIL_TEST_TO: process.env.EMAIL_TEST_TO || "",
+  DASHBOARD_URL: process.env.DASHBOARD_URL || "",
 };

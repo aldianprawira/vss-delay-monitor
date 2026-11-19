@@ -19,6 +19,10 @@ const {
   getOrGenerateDailySummary,
   getMonthlySummary,
 } = require("./dailySummary");
+const {
+  renderDailyEmailPreview,
+  sendDailySummaryEmail,
+} = require("./dailyEmail");
 const { DELAY_CATEGORIES } = require("../public/format");
 const {
   ingest,
@@ -287,6 +291,39 @@ router.get(
       cancelOnCloseRes: res,
     });
     res.json(data);
+  }),
+);
+
+router.get(
+  "/api/summary/email-preview",
+  asyncHandler(async (req, res) => {
+    const date = req.query.date ? String(req.query.date) : undefined;
+    if (date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      return res
+        .status(400)
+        .json({ error: "Invalid date format; expected YYYY-MM-DD." });
+    }
+    const isTest = req.query.test !== "0";
+    const html = await renderDailyEmailPreview(date, { isTest });
+    res.type("html").send(html);
+  }),
+);
+
+router.post(
+  "/api/summary/send-email",
+  asyncHandler(async (req, res) => {
+    const body = req.body || {};
+    const date = body.date ? String(body.date) : undefined;
+    if (date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      return res
+        .status(400)
+        .json({ error: "Invalid date format; expected YYYY-MM-DD." });
+    }
+    const isTest = body.test !== false;
+    const to = body.to ? String(body.to) : undefined;
+    const force = body.force === true;
+    const result = await sendDailySummaryEmail(date, { to, isTest, force });
+    res.json(result);
   }),
 );
 

@@ -12,12 +12,15 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
+    "@resvg/resvg-js": "^2.6.2",
     "dayjs": "^1.11.23",
     "dotenv": "^18.0.0",
     "express": "^5.2.1",
     "https-proxy-agent": "^7.0.6",
+    "nodemailer": "^10.6.0",
     "pg": "^8.23.0",
     "undici": "^6.29.1",
-    "ws": "^8.21.3"
+    "ws": "^8.21.3",
+    "xlsx": "^0.18.5"
   }
 }

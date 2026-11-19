@@ -5,6 +5,7 @@ const { startIngestor } = require("./src/ingestor");
 const { startWriterLoops } = require("./src/writer");
 const { startPartitionMaintenance } = require("./src/maintenance");
 const { startDailySummaryScheduler } = require("./src/dailySummary");
+const { startDailyEmailScheduler } = require("./src/dailyEmail");
 const routes = require("./src/routes");
 
 process.on("unhandledRejection", (reason) => {
@@ -21,6 +22,7 @@ process.on("uncaughtException", (err) => {
 });
 
 const app = express();
+app.use(express.json());
 app.use(express.static("public"));
 app.use(routes);
 
@@ -42,4 +44,5 @@ startIngestor();
 startPartitionMaintenance().finally(() => {
   startWriterLoops();
   startDailySummaryScheduler();
+  startDailyEmailScheduler();
 });
