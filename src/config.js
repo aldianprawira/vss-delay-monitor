@@ -57,6 +57,8 @@ module.exports = {
   SMTP_PASS: process.env.SMTP_PASS || "",
   EMAIL_FROM: process.env.EMAIL_FROM || "b2bops_alert_noreply@ioh.co.id",
   EMAIL_TO: process.env.EMAIL_TO || "",
+  EMAIL_CC: process.env.EMAIL_CC || "",
   EMAIL_TEST_TO: process.env.EMAIL_TEST_TO || "",
+  EMAIL_TEST_CC: process.env.EMAIL_TEST_CC || "",
   DASHBOARD_URL: process.env.DASHBOARD_URL || "",
 };

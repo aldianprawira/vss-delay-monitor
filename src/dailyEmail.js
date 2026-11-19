@@ -22,7 +22,9 @@ const {
   SMTP_PASS,
   EMAIL_FROM,
   EMAIL_TO,
+  EMAIL_CC,
   EMAIL_TEST_TO,
+  EMAIL_TEST_CC,
   DASHBOARD_URL,
 } = require("./config");
 const { writerPool } = require("./db");
@@ -420,111 +422,135 @@ function buildEmailHtml(payload, { inlineDataUri = false, isTest = false } = {})
   return `<!doctype html>
 <html>
 <head><meta charset="utf-8" /></head>
-<body style="margin:0;padding:20px;background:#f1f5f9;font-family:Arial,Helvetica,sans-serif;color:#0f172a;">
-  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:960px;margin:0 auto;">
+<body style="margin:0;padding:0;background-color:#f1f5f9;font-family:Arial,Helvetica,sans-serif;color:#0f172a;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" bgcolor="#f1f5f9" style="background-color:#f1f5f9;">
     <tr>
-      <td>
-        ${testBanner}
-        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-bottom:16px;">
+      <td align="center" style="padding:24px 16px;">
+        <table role="presentation" width="920" align="center" cellspacing="0" cellpadding="0" style="width:100%;max-width:920px;margin:0 auto;">
           <tr>
             <td>
-              <h1 style="margin:0;font-size:22px;color:#0f172a;">Daily Summary Report</h1>
-              <div style="margin-top:4px;font-size:13px;color:#475569;">
-                Report Date: <strong>${escHtml(date)}</strong> (WIB) &middot; Midnight snapshot &amp; daily delay summary
-              </div>
-            </td>
-            <td align="right" style="vertical-align:middle;font-size:13px;">
-              ${dashboardLink}
-            </td>
-          </tr>
-        </table>
-
-        <!-- KPI Cards -->
-        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-bottom:16px;">
-          <tr>
-            <td width="32%" style="background:#ffffff;border:1px solid #e2e8f0;border-top:3px solid #2563eb;border-radius:10px;padding:16px;vertical-align:top;">
-              <div style="font-size:12px;color:#64748b;font-weight:600;">Total devices</div>
-              <div style="font-size:28px;font-weight:700;color:#0f172a;margin:6px 0;">${regCount.toLocaleString()}</div>
-              <div style="font-size:12px;color:#64748b;">${onlineCount.toLocaleString()} online &middot; ${warnCount.toLocaleString()} warning</div>
-            </td>
-            <td width="2%"></td>
-            <td width="32%" style="background:#ffffff;border:1px solid #e2e8f0;border-top:3px solid ${offlineCount > 0 ? "#dc2626" : "#16a34a"};border-radius:10px;padding:16px;vertical-align:top;">
-              <div style="font-size:12px;color:#64748b;font-weight:600;">Total offline</div>
-              <div style="font-size:28px;font-weight:700;color:#0f172a;margin:6px 0;">${offlineCount.toLocaleString()}</div>
-              <div style="font-size:12px;color:#64748b;">${pct(offlineCount, regCount)}% of total &middot; captured at 00:00</div>
-            </td>
-            <td width="2%"></td>
-            <td width="32%" style="background:#ffffff;border:1px solid #e2e8f0;border-top:3px solid #2563eb;border-radius:10px;padding:16px;vertical-align:top;">
-              <div style="font-size:12px;color:#64748b;font-weight:600;">Total records</div>
-              <div style="font-size:28px;font-weight:700;color:#0f172a;margin:6px 0;">${recordsCount.toLocaleString()}</div>
-              <div style="font-size:12px;color:#64748b;">${shownCount.toLocaleString()} active devices on ${escHtml(date)}</div>
-            </td>
-          </tr>
-        </table>
-
-        <!-- Doughnut Charts -->
-        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-bottom:16px;">
-          <tr>
-            <td width="49%" style="background:#ffffff;border:1px solid #e2e8f0;border-radius:10px;padding:16px;vertical-align:top;">
-              <div style="font-size:14px;font-weight:700;color:#0f172a;margin-bottom:10px;">Staleness status distribution (captured at 00:00)</div>
-              <img src="${imgSrc("stale-pie", images.stalePiePng)}" alt="Staleness status distribution" style="width:100%;max-width:440px;height:auto;display:block;" />
-              <div style="font-size:12px;font-weight:700;color:#334155;margin:14px 0 6px;">Top 10 Offline devices (captured at 00:00)</div>
-              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;">
-                <thead>
-                  <tr style="background:#f8fafc;">
-                    <th align="left" style="padding:6px 8px;border-bottom:1px solid #e2e8f0;font-size:11px;color:#64748b;">Device</th>
-                    <th align="left" style="padding:6px 8px;border-bottom:1px solid #e2e8f0;font-size:11px;color:#64748b;">Silent Duration</th>
-                    <th align="left" style="padding:6px 8px;border-bottom:1px solid #e2e8f0;font-size:11px;color:#64748b;">Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  ${topOfflineRows || `<tr><td colspan="3" style="padding:8px;font-size:12px;color:#64748b;text-align:center;">No offline devices</td></tr>`}
-                </tbody>
-              </table>
-            </td>
-            <td width="2%"></td>
-            <td width="49%" style="background:#ffffff;border:1px solid #e2e8f0;border-radius:10px;padding:16px;vertical-align:top;">
-              <div style="font-size:14px;font-weight:700;color:#0f172a;margin-bottom:10px;">Device distribution by average delay category</div>
-              <img src="${imgSrc("delay-pie", images.delayPiePng)}" alt="Delay category distribution" style="width:100%;max-width:440px;height:auto;display:block;" />
-              <div style="font-size:12px;font-weight:700;color:#334155;margin:14px 0 6px;">Top 10 Delay summary</div>
-              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;">
-                <thead>
-                  <tr style="background:#f8fafc;">
-                    <th align="left" style="padding:6px 8px;border-bottom:1px solid #e2e8f0;font-size:11px;color:#64748b;">Device</th>
-                    <th align="left" style="padding:6px 8px;border-bottom:1px solid #e2e8f0;font-size:11px;color:#64748b;">Avg Delay</th>
-                    <th align="left" style="padding:6px 8px;border-bottom:1px solid #e2e8f0;font-size:11px;color:#64748b;">Max Delay</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  ${topDelayRows || `<tr><td colspan="3" style="padding:8px;font-size:12px;color:#64748b;text-align:center;">No delay records</td></tr>`}
-                </tbody>
+              ${testBanner}
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
+                <tr>
+                  <td>
+                    <h1 style="margin:0;font-size:22px;color:#0f172a;">Daily Summary Report</h1>
+                    <div style="margin-top:4px;font-size:13px;color:#475569;">
+                      Report Date: <strong>${escHtml(date)}</strong> (WIB) &middot; Midnight snapshot &amp; daily delay summary
+                    </div>
+                  </td>
+                  <td align="right" style="vertical-align:middle;font-size:13px;">
+                    ${dashboardLink}
+                  </td>
+                </tr>
               </table>
             </td>
           </tr>
-        </table>
-
-        <!-- Monthly Stacked Bar Charts -->
-        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-bottom:16px;">
+          <tr><td height="16" style="height:16px;font-size:0;line-height:0;">&nbsp;</td></tr>
           <tr>
-            <td style="background:#ffffff;border:1px solid #e2e8f0;border-radius:10px;padding:16px;">
-              <div style="font-size:14px;font-weight:700;color:#0f172a;margin-bottom:10px;">Daily staleness distribution (captured at 00:00)</div>
-              <img src="${imgSrc("stale-bar", images.staleBarPng)}" alt="Daily staleness distribution" style="width:100%;height:auto;display:block;" />
+            <td>
+              <!-- KPI Cards -->
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
+                <tr>
+                  <td width="32%" style="background-color:#ffffff;border:1px solid #e2e8f0;border-top:3px solid #2563eb;border-radius:10px;padding:16px;vertical-align:top;">
+                    <div style="font-size:12px;color:#64748b;font-weight:600;">Total devices</div>
+                    <div style="font-size:28px;font-weight:700;color:#0f172a;margin:6px 0;">${regCount.toLocaleString()}</div>
+                    <div style="font-size:12px;color:#64748b;">${onlineCount.toLocaleString()} online &middot; ${warnCount.toLocaleString()} warning</div>
+                  </td>
+                  <td width="16" style="width:16px;font-size:0;line-height:0;">&nbsp;</td>
+                  <td width="32%" style="background-color:#ffffff;border:1px solid #e2e8f0;border-top:3px solid ${offlineCount > 0 ? "#dc2626" : "#16a34a"};border-radius:10px;padding:16px;vertical-align:top;">
+                    <div style="font-size:12px;color:#64748b;font-weight:600;">Total offline</div>
+                    <div style="font-size:28px;font-weight:700;color:#0f172a;margin:6px 0;">${offlineCount.toLocaleString()}</div>
+                    <div style="font-size:12px;color:#64748b;">${pct(offlineCount, regCount)}% of total &middot; captured at 00:00</div>
+                  </td>
+                  <td width="16" style="width:16px;font-size:0;line-height:0;">&nbsp;</td>
+                  <td width="32%" style="background-color:#ffffff;border:1px solid #e2e8f0;border-top:3px solid #2563eb;border-radius:10px;padding:16px;vertical-align:top;">
+                    <div style="font-size:12px;color:#64748b;font-weight:600;">Total records</div>
+                    <div style="font-size:28px;font-weight:700;color:#0f172a;margin:6px 0;">${recordsCount.toLocaleString()}</div>
+                    <div style="font-size:12px;color:#64748b;">${shownCount.toLocaleString()} active devices on ${escHtml(date)}</div>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <tr><td height="16" style="height:16px;font-size:0;line-height:0;">&nbsp;</td></tr>
+          <tr>
+            <td>
+              <!-- Doughnut Charts -->
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
+                <tr>
+                  <td width="49%" style="background-color:#ffffff;border:1px solid #e2e8f0;border-radius:10px;padding:16px;vertical-align:top;">
+                    <div style="font-size:14px;font-weight:700;color:#0f172a;margin-bottom:10px;">Staleness status distribution (captured at 00:00)</div>
+                    <img src="${imgSrc("stale-pie", images.stalePiePng)}" width="420" alt="Staleness status distribution" style="width:100%;max-width:440px;height:auto;display:block;" />
+                    <div style="font-size:12px;font-weight:700;color:#334155;margin:14px 0 6px;">Top 10 Offline devices (captured at 00:00)</div>
+                    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;">
+                      <thead>
+                        <tr style="background:#f8fafc;">
+                          <th align="left" style="padding:6px 8px;border-bottom:1px solid #e2e8f0;font-size:11px;color:#64748b;">Device</th>
+                          <th align="left" style="padding:6px 8px;border-bottom:1px solid #e2e8f0;font-size:11px;color:#64748b;">Silent Duration</th>
+                          <th align="left" style="padding:6px 8px;border-bottom:1px solid #e2e8f0;font-size:11px;color:#64748b;">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        ${topOfflineRows || `<tr><td colspan="3" style="padding:8px;font-size:12px;color:#64748b;text-align:center;">No offline devices</td></tr>`}
+                      </tbody>
+                    </table>
+                  </td>
+                  <td width="16" style="width:16px;font-size:0;line-height:0;">&nbsp;</td>
+                  <td width="49%" style="background-color:#ffffff;border:1px solid #e2e8f0;border-radius:10px;padding:16px;vertical-align:top;">
+                    <div style="font-size:14px;font-weight:700;color:#0f172a;margin-bottom:10px;">Device distribution by average delay category</div>
+                    <img src="${imgSrc("delay-pie", images.delayPiePng)}" width="420" alt="Delay category distribution" style="width:100%;max-width:440px;height:auto;display:block;" />
+                    <div style="font-size:12px;font-weight:700;color:#334155;margin:14px 0 6px;">Top 10 Delay summary</div>
+                    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;">
+                      <thead>
+                        <tr style="background:#f8fafc;">
+                          <th align="left" style="padding:6px 8px;border-bottom:1px solid #e2e8f0;font-size:11px;color:#64748b;">Device</th>
+                          <th align="left" style="padding:6px 8px;border-bottom:1px solid #e2e8f0;font-size:11px;color:#64748b;">Avg Delay</th>
+                          <th align="left" style="padding:6px 8px;border-bottom:1px solid #e2e8f0;font-size:11px;color:#64748b;">Max Delay</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        ${topDelayRows || `<tr><td colspan="3" style="padding:8px;font-size:12px;color:#64748b;text-align:center;">No delay records</td></tr>`}
+                      </tbody>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <tr><td height="16" style="height:16px;font-size:0;line-height:0;">&nbsp;</td></tr>
+          <tr>
+            <td>
+              <!-- Monthly Stacked Bar Charts -->
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
+                <tr>
+                  <td style="background-color:#ffffff;border:1px solid #e2e8f0;border-radius:10px;padding:16px;">
+                    <div style="font-size:14px;font-weight:700;color:#0f172a;margin-bottom:10px;">Daily staleness distribution (captured at 00:00)</div>
+                    <img src="${imgSrc("stale-bar", images.staleBarPng)}" width="888" alt="Daily staleness distribution" style="width:100%;height:auto;display:block;" />
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <tr><td height="16" style="height:16px;font-size:0;line-height:0;">&nbsp;</td></tr>
+          <tr>
+            <td>
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
+                <tr>
+                  <td style="background-color:#ffffff;border:1px solid #e2e8f0;border-radius:10px;padding:16px;">
+                    <div style="font-size:14px;font-weight:700;color:#0f172a;margin-bottom:10px;">Daily devices with average delay &gt; 5s</div>
+                    <img src="${imgSrc("delay-bar", images.delayBarPng)}" width="888" alt="Daily devices with average delay > 5s" style="width:100%;height:auto;display:block;" />
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <tr><td height="12" style="height:12px;font-size:0;line-height:0;">&nbsp;</td></tr>
+          <tr>
+            <td align="center" style="font-size:12px;color:#64748b;">
+              Attached: <strong>${escHtml(payload.excels.offlineFilename)}</strong> and <strong>${escHtml(payload.excels.delayFilename)}</strong>
             </td>
           </tr>
         </table>
-
-        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-bottom:16px;">
-          <tr>
-            <td style="background:#ffffff;border:1px solid #e2e8f0;border-radius:10px;padding:16px;">
-              <div style="font-size:14px;font-weight:700;color:#0f172a;margin-bottom:10px;">Daily devices with average delay &gt; 5s</div>
-              <img src="${imgSrc("delay-bar", images.delayBarPng)}" alt="Daily devices with average delay > 5s" style="width:100%;height:auto;display:block;" />
-            </td>
-          </tr>
-        </table>
-
-        <div style="font-size:12px;color:#64748b;text-align:center;padding-top:8px;">
-          Attached: <strong>${escHtml(payload.excels.offlineFilename)}</strong> and <strong>${escHtml(payload.excels.delayFilename)}</strong>
-        </div>
       </td>
     </tr>
   </table>
@@ -602,10 +628,12 @@ async function sendDailySummaryEmail(
     const subjectPrefix = isTest ? "[TEST] " : "";
     const subject = `${subjectPrefix}VSS Daily Summary Report - ${payload.date}`;
 
+    const ccRecipients = isTest ? EMAIL_TEST_CC : EMAIL_CC;
     const transporter = createTransporter();
     const info = await transporter.sendMail({
       from: EMAIL_FROM,
       to: recipients,
+      ...(ccRecipients ? { cc: ccRecipients } : {}),
       subject,
       html,
       attachments: [
